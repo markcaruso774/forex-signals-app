@@ -1,4 +1,4 @@
-polygon-api-client
+alpha_vantage
 pandas
 numpy
 plotly
