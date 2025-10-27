@@ -1,44 +1,33 @@
 import streamlit as st
-from polygon import RESTClient
+from alpha_vantage.foreignexchange import ForeignExchange
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-import plotly.graph_objects as go  # pip install plotly
+import plotly.graph_objects as go
 
 # Config
-POLYGON_API_KEY = "QSSK6RC0JXCMF7EN"  # Your API key
-TICKER = "C:EURUSD"  # Forex ticker for Polygon
+ALPHA_API_KEY = "QSSK6RC0JXCMF7EN"  # Your Alpha Vantage API key
+TICKER = "EUR/USD"  # Alpha Vantage forex pair format
 
 @st.cache_data(ttl=60)  # Cache for 1 min to avoid API limits
 def fetch_data(days_back=1):
-    client = RESTClient(api_key=POLYGON_API_KEY)
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days_back)
-    
-    aggs = client.get_aggs(
-        ticker=TICKER,
-        multiplier=1,
-        timespan="minute",
-        from_=start_date.strftime("%Y-%m-%d"),
-        to=end_date.strftime("%Y-%m-%d"),
-        limit=5000
-    )
-    
-    data = []
-    for agg in aggs:
-        data.append({
-            'timestamp': pd.to_datetime(agg.timestamp, unit='ms'),
-            'open': agg.open,
-            'high': agg.high,
-            'low': agg.low,
-            'close': agg.close,
-            'volume': agg.volume
-        })
-    
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df.set_index('timestamp', inplace=True)
-    return df
+    cc = ForeignExchange(key=ALPHA_API_KEY, output_format='pandas')
+    try:
+        data, meta = cc.get_currency_exchange_intraday(
+            from_symbol='EUR',
+            to_symbol='USD',
+            interval='1min',
+            outputsize='compact'  # ~100 data points on free tier
+        )
+        df = data
+        if not df.empty:
+            df.index = pd.to_datetime(df.index)
+            df = df.rename(columns={'1. open': 'open', '2. high': 'high', '3. low': 'low', '4. close': 'close'})
+            df = df[['open', 'high', 'low', 'close']].tail(500)  # Limit to recent data
+        return df
+    except Exception as e:
+        st.error(f"API error: {str(e)}")
+        return pd.DataFrame()  # Return empty DataFrame on failure
 
 def calculate_rsi(prices, window=14):
     delta = prices.diff()
@@ -47,7 +36,7 @@ def calculate_rsi(prices, window=14):
     avg_gain = gain.rolling(window=window, min_periods=1).mean()
     avg_loss = loss.rolling(window=window, min_periods=1).mean()
     rs = avg_gain / avg_loss
-    rs = rs.replace([np.inf, -np.inf], np.nan).fillna(0)  # Handle division by zero
+    rs = rs.replace([np.inf, -np.inf], np.nan).fillna(0)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
@@ -57,11 +46,10 @@ def generate_signals(df):
     df['signal'] = 0
     df.loc[(df['rsi'] < 30) & (df['close'] > df['sma']), 'signal'] = 1  # Buy
     df.loc[(df['rsi'] > 70) & (df['close'] < df['sma']), 'signal'] = -1  # Sell
-    df['confidence'] = np.abs(df['rsi'] - 50) / 50  # Confidence score (0-1)
+    df['confidence'] = np.abs(df['rsi'] - 50) / 50
     return df
 
 def simulate_backtest(df):
-    # Simple backtest: Assume 10-pip TP/SL per trade
     signals = df[df['signal'] != 0].copy()
     if signals.empty:
         return 0, 0
@@ -92,7 +80,7 @@ else:
     fig.update_layout(
         yaxis_title='Price', yaxis2_title='RSI', yaxis2_side='right', yaxis2_range=[0,100],
         title=f"EUR/USD Signals (Last {len(df)} mins)",
-        height=600, template='plotly_dark'  # Dark theme for pro look
+        height=600, template='plotly_dark'
     )
     st.plotly_chart(fig, use_container_width=True)
     
@@ -120,6 +108,6 @@ else:
             st.balloons()
             st.success("Simulated: +3.2 pips! Premium unlocks real-time alerts.")
     with col2:
-        st.markdown("[Get Premium Now](https://buy.stripe.com/test_123) | [Trade with OANDA](https://oanda.com)")  # Replace with your links
+        st.markdown("[Get Premium Now](https://buy.stripe.com/test_123) | [Trade with Alternative](https://example.com)")  # Update link
     
     st.caption("Disclaimer: Forex trading is high-risk. Past performance ≠ future results. Trade responsibly.")
