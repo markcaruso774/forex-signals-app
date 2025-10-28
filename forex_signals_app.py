@@ -3,9 +3,10 @@ from twelvedata import TDClient
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-# Import the subplot tool
 from plotly.subplots import make_subplots
 from datetime import datetime
+# NEW: Import for auto-refresh
+import streamlit.components.v1 as components
 
 # === CONFIG ===
 TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05"
@@ -103,7 +104,6 @@ def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    # Using rolling mean as in your code
     avg_gain = gain.rolling(window=period, min_periods=1).mean()
     avg_loss = loss.rolling(window=period, min_periods=1).mean()
     rs = avg_gain / avg_loss
@@ -113,78 +113,93 @@ def calculate_rsi(series, period=14):
 df['rsi'] = calculate_rsi(df['close'])
 df['sma_20'] = df['close'].rolling(20).mean()
 df['signal'] = 0
-# Use sidebar alert levels for signal generation
 df.loc[(df['rsi'] < alert_rsi_low) & (df['close'] > df['sma_20']), 'signal'] = 1
 df.loc[(df['rsi'] > alert_rsi_high) & (df['close'] < df['sma_20']), 'signal'] = -1
 df['confidence'] = (abs(df['rsi'] - 50) / 50).round(3)
-df = df.dropna() # Drop initial NaN values
+df = df.dropna()
 
 if df.empty:
     st.warning("Not enough data to calculate indicators. Waiting for more data...")
     st.stop()
 
-# === CHART (THE BIG FIX) ===
+# === CHART ===
 st.subheader(f"{selected_pair} – Last {len(df)} Minutes")
 
-# Create a figure with 2 rows: 1 for price, 1 for RSI
+# --- Chart Type Toggle ---
+chart_type = st.radio(
+    "Select Chart Type",
+    ["Candlestick", "Line", "Bar"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+# --- 2-Pane Chart ---
 fig = make_subplots(
     rows=2, cols=1,
-    shared_xaxes=True,  # Link the x-axes
-    vertical_spacing=0.05,  # Space between charts
-    row_heights=[0.7, 0.3]  # Price chart 70%, RSI 30%
+    shared_xaxes=True,
+    vertical_spacing=0.05,
+    row_heights=[0.7, 0.3]
 )
 
 # --- Price Chart (Row 1) ---
-# Candlestick (keeping your dynamic theme colors)
-fig.add_trace(go.Candlestick(
-    x=df.index,
-    open=df['open'], high=df['high'], low=df['low'], close=df['close'],
-    name="Price",
-    increasing_line_color="#26a69a" if st.session_state.theme == "dark" else "#28a745",
-    decreasing_line_color="#ef5350" if st.session_state.theme == "dark" else "#dc3545"
-), row=1, col=1)
+if chart_type == "Candlestick":
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df['open'], high=df['high'], low=df['low'], close=df['close'],
+        name="Price",
+        increasing_line_color="#26a69a" if st.session_state.theme == "dark" else "#28a745",
+        decreasing_line_color="#ef5350" if st.session_state.theme == "dark" else "#dc3545"
+    ), row=1, col=1)
+elif chart_type == "Line":
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['close'], name="Price (Line)",
+        line=dict(color="#2196f3")
+    ), row=1, col=1)
+elif chart_type == "Bar":
+    fig.add_trace(go.Ohlc(
+        x=df.index,
+        open=df['open'], high=df['high'], low=df['low'], close=df['close'],
+        name="Price (Bar)",
+        increasing_line_color="#26a69a" if st.session_state.theme == "dark" else "#28a745",
+        decreasing_line_color="#ef5350" if st.session_state.theme == "dark" else "#dc3545"
+    ), row=1, col=1)
 
-# SMA
+# SMA (add to Row 1)
 fig.add_trace(go.Scatter(
     x=df.index, y=df['sma_20'], 
     name="SMA(20)", line=dict(color="#ff9800")
 ), row=1, col=1)
 
 # --- RSI Chart (Row 2) ---
-# RSI Line
 fig.add_trace(go.Scatter(
     x=df.index, y=df['rsi'], 
     name="RSI", line=dict(color="#9c27b0")
 ), row=2, col=1)
-
-# Add Overbought/Oversold lines from sidebar settings
 fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="red", line_width=1, row=2, col=1)
 fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="green", line_width=1, row=2, col=1)
 
 # --- Layout Updates ---
 fig.update_layout(
-    xaxis_rangeslider_visible=False,  # Hide the range slider
-    # Keep your dynamic theme template
+    xaxis_rangeslider_visible=False,
     template="plotly_dark" if st.session_state.theme == "dark" else "plotly_white",
     height=500,
+    margin=dict(l=0, r=10, t=40, b=0), # Reduced margins
     xaxis_showticklabels=True,
     xaxis2_showticklabels=True,
     yaxis1_title="Price",
     yaxis2_title="RSI",
-    yaxis2_range=[0, 100]  # Lock RSI scale
+    yaxis2_range=[0, 100]
 )
-# Hide x-axis labels on the top chart to avoid repetition
 fig.update_xaxes(showticklabels=False, row=1, col=1)
 
 st.plotly_chart(fig, use_container_width=True)
 
 
-# === NEW DASHBOARD LAYOUT ===
+# === 2-Column Dashboard Layout ===
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("Live Status")
-    # Get latest data
     latest = df.iloc[-1]
     
     mcol1, mcol2, mcol3 = st.columns(3)
@@ -197,7 +212,6 @@ with col1:
     if not signals_df.empty:
         for idx, row in signals_df.iterrows():
             sig = "BUY" if row['signal'] == 1 else "SELL"
-            # Use your custom CSS classes
             color_class = "buy-signal" if row['signal'] == 1 else "sell-signal"
             st.markdown(f"<span class='{color_class}'>**{sig}**</span> at `{idx.strftime('%H:%M')}` | "
                         f"Price: `{row['close']:.5f}` | RSI: `{row['rsi']:.1f}`", unsafe_allow_html=True)
@@ -208,7 +222,9 @@ with col2:
     st.subheader("Mock Backtest")
     signals = df[df['signal'] != 0]
     if not signals.empty:
-        signals['pips'] = np.where(signals['signal'] == 1, 10, -10)
+        signals['pils'] = np.where(signals['signal'] == 1, 10, -10) # Typo 'pils' -> 'pips'
+        # Let's fix the potential typo 'pils' to 'pips'
+        signals['pips'] = np.where(signals['signal'] == 1, 10, -10) 
         win_rate = (signals['pips'] > 0).mean()
         total_pips = signals['pips'].sum()
         bcol1, bcol2 = st.columns(2)
@@ -217,10 +233,7 @@ with col2:
     else:
         st.info("No signals to backtest.")
 
-    # === ECONOMIC CALENDAR (Styled) ===
     st.subheader("Economic Calendar")
-    
-    # Use Markdown for better styling
     st.markdown(f"""
     | Time (UTC) | Event | Impact |
     | :--- | :--- | :--- |
@@ -241,4 +254,8 @@ with col2:
     st.markdown("[Get Premium Now](https://buy.stripe.com/test_123)")
 
 st.caption("Not financial advice. Trade responsibly.")
+
+# NEW: Auto-refresh component
+# Refreshes the app every 61 seconds (just over the 60s cache)
+components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
