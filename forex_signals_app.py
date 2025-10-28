@@ -3,35 +3,94 @@ from twelvedata import TDClient
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from datetime import datetime
 
 # === CONFIG ===
-TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05"  # Your key
-SYMBOL = "EUR/USD"
+TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05"
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY"]
 INTERVAL = "1min"
-OUTPUTSIZE = 500  # Max on free tier
+OUTPUTSIZE = 500
 
-@st.cache_data(ttl=60)  # Refresh every 60 seconds
-def fetch_data():
+# === PAGE CONFIG ===
+st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
+
+# === THEME TOGGLE ===
+if 'theme' not in st.session_state:
+    st.session_state.theme = "dark"
+
+def toggle_theme():
+    st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+
+# === APPLY THEME ===
+def apply_theme():
+    if st.session_state.theme == "dark":
+        return """
+        <style>
+            .stApp { background-color: #0e1117; color: #f0f0f0; }
+            .stMetric > label { color: #b0b0b0; }
+            .stMetric > div > div { color: #ffffff; }
+            .buy-signal { color: #26a69a; }
+            .sell-signal { color: #ef5350; }
+            .stSelectbox > div > div { background-color: #1f1f1f; color: #f0f0f0; }
+            .stSlider > div > div { background-color: #333; }
+            .stTable { color: #f0f0f0; }
+        </style>
+        """
+    else:  # light
+        return """
+        <style>
+            .stApp { background-color: #ffffff; color: #212529; }
+            .stMetric > label { color: #6c757d; }
+            .stMetric > div > div { color: #212529; }
+            .buy-signal { color: #28a745; }
+            .sell-signal { color: #dc3545; }
+            .stSelectbox > div > div { background-color: #f8f9fa; color: #212529; }
+            .stSlider > div > div { background-color: #e9ecef; }
+            .stTable { color: #212529; }
+        </style>
+        """
+
+st.markdown(apply_theme(), unsafe_allow_html=True)
+
+# === HEADER WITH TOGGLE BUTTON ===
+col1, col2 = st.columns([6, 1])
+with col1:
+    st.title("PipWizard – Live Forex Signals")
+with col2:
+    theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
+    if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
+        st.rerun()
+
+# === SIDEBAR ===
+st.sidebar.title("PipWizard")
+selected_pair = st.sidebar.selectbox("Select Pair", PAIRS, index=0)
+alert_rsi_low = st.sidebar.slider("Alert RSI <", 20, 40, 30)
+alert_rsi_high = st.sidebar.slider("Alert RSI >", 60, 80, 70)
+st.sidebar.markdown("---")
+st.sidebar.info("Premium ($9.99/mo): Alerts, 10+ Pairs, Backtesting")
+st.sidebar.markdown("[Get Premium](https://buy.stripe.com/test_123)")
+
+# === FETCH DATA ===
+@st.cache_data(ttl=60)
+def fetch_data(symbol):
     td = TDClient(apikey=TD_API_KEY)
     try:
-        ts = td.time_series(
-            symbol=SYMBOL,
-            interval=INTERVAL,
-            outputsize=OUTPUTSIZE
-        ).as_pandas()
-        
+        ts = td.time_series(symbol=symbol, interval=INTERVAL, outputsize=OUTPUTSIZE).as_pandas()
         if ts.empty:
-            st.error("No data returned from Twelve Data.")
             return pd.DataFrame()
-        
-        # Clean column names
         df = ts[['open', 'high', 'low', 'close']].copy()
         df.index = pd.to_datetime(df.index)
-        return df[::-1]  # Reverse to chronological order
+        return df[::-1].tail(500)
     except Exception as e:
-        st.error(f"API Error: {str(e)}")
+        st.error(f"Data Error: {str(e)}")
         return pd.DataFrame()
 
+df = fetch_data(selected_pair)
+if df.empty:
+    st.error("No data. Check connection.")
+    st.stop()
+
+# === SIGNALS ===
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
@@ -42,107 +101,80 @@ def calculate_rsi(series, period=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def generate_signals(df):
-    df['rsi'] = calculate_rsi(df['close'])
-    df['sma_20'] = df['close'].rolling(20).mean()
-    df['signal'] = 0
-    df.loc[(df['rsi'] < 30) & (df['close'] > df['sma_20']), 'signal'] = 1   # Buy
-    df.loc[(df['rsi'] > 70) & (df['close'] < df['sma_20']), 'signal'] = -1  # Sell
-    df['confidence'] = (abs(df['rsi'] - 50) / 50).round(3)
-    return df
-
-def backtest_signals(df):
-    signals = df[df['signal'] != 0].copy()
-    if signals.empty:
-        return 0, 0
-    # Mock: +10 pips on win, -10 on loss
-    signals['pips'] = np.where(signals['signal'] == 1, 10, -10)
-    win_rate = (signals['pips'] > 0).mean()
-    total_pips = signals['pips'].sum()
-    return round(win_rate, 3), int(total_pips)
-
-# === STREAMLIT APP ===
-st.set_page_config(page_title="PipWizard", layout="wide")
-st.title("PipWizard – EUR/USD Live Signals")
-
-# Sidebar
-st.sidebar.header("Upgrade to Premium")
-st.sidebar.info(
-    "Free: EUR/USD signals\n\n"
-    "Premium ($9.99/mo):\n"
-    "• Real-time alerts (email/Telegram)\n"
-    "• 10+ currency pairs\n"
-    "• Advanced backtesting\n"
-    "• No ads"
-)
-
-# Fetch data
-with st.spinner("Fetching live EUR/USD data..."):
-    df = fetch_data()
-
-if df.empty:
-    st.error("Failed to load data. Check API key or internet.")
-    st.stop()
-
-df = generate_signals(df)
-win_rate, total_pips = backtest_signals(df)
+df['rsi'] = calculate_rsi(df['close'])
+df['sma_20'] = df['close'].rolling(20).mean()
+df['signal'] = 0
+df.loc[(df['rsi'] < 30) & (df['close'] > df['sma_20']), 'signal'] = 1
+df.loc[(df['rsi'] > 70) & (df['close'] < df['sma_20']), 'signal'] = -1
+df['confidence'] = (abs(df['rsi'] - 50) / 50).round(3)
 
 # === CHART ===
 fig = go.Figure()
-
-# Candlestick
 fig.add_trace(go.Candlestick(
-    x=df.index,
-    open=df['open'], high=df['high'], low=df['low'], close=df['close'],
-    name="Price"
+    x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'],
+    name="Price",
+    increasing_line_color="#26a69a" if st.session_state.theme == "dark" else "#28a745",
+    decreasing_line_color="#ef5350" if st.session_state.theme == "dark" else "#dc3545"
 ))
-
-# SMA
-fig.add_trace(go.Scatter(x=df.index, y=df['sma_20'], name="SMA(20)", line=dict(color="orange")))
-
-# RSI (secondary axis)
-fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name="RSI", yaxis="y2", line=dict(color="purple", dash="dot")))
-
+fig.add_trace(go.Scatter(x=df.index, y=df['sma_20'], name="SMA(20)", line=dict(color="#ff9800")))
+fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name="RSI", yaxis="y2", line=dict(color="#9c27b0")))
 fig.update_layout(
-    title=f"EUR/USD Live Chart – Last {len(df)} Minutes",
-    yaxis=dict(title="Price (USD)"),
+    title=f"{selected_pair} – Last {len(df)} Minutes",
+    yaxis=dict(title="Price"),
     yaxis2=dict(title="RSI", overlaying="y", side="right", range=[0, 100]),
     xaxis_rangeslider_visible=False,
-    template="plotly_dark",
-    height=600
+    template="plotly_dark" if st.session_state.theme == "dark" else "plotly_white",
+    height=500
 )
-
 st.plotly_chart(fig, use_container_width=True)
 
-# === PERFORMANCE ===
-col1, col2 = st.columns(2)
-col1.metric("Win Rate (Mock)", f"{win_rate:.1%}")
-col2.metric("Total Pips (24h)", f"{total_pips:+}")
+# === METRICS + SIGNALS ===
+col1, col2, col3 = st.columns(3)
+col1.metric("Price", f"{df['close'].iloc[-1]:.5f}")
+col2.metric("RSI", f"{df['rsi'].iloc[-1]:.1f}")
+col3.metric("SMA(20)", f"{df['sma_20'].iloc[-1]:.5f}")
 
-# === LATEST SIGNALS ===
 st.subheader("Latest Signals")
-signals = df[df['signal'] != 0].tail(3)
-
-if not signals.empty:
-    for idx, row in signals.iterrows():
+signals_df = df[df['signal'] != 0].tail(5)
+if not signals_df.empty:
+    for idx, row in signals_df.iterrows():
         sig = "BUY" if row['signal'] == 1 else "SELL"
-        color = "green" if row['signal'] == 1 else "red"
-        st.markdown(
-            f"**<span style='color:{color}'>{sig}</span>** at `{idx.strftime('%H:%M')}` | "
-            f"Price: `{row['close']:.5f}` | RSI: `{row['rsi']:.1f}` | "
-            f"Confidence: `{row['confidence']:.1%}`",
-            unsafe_allow_html=True
-        )
+        color_class = "buy-signal" if row['signal'] == 1 else "sell-signal"
+        st.markdown(f"<span class='{color_class}'>**{sig}**</span> at `{idx.strftime('%H:%M')}` | "
+                    f"Price: `{row['close']:.5f}` | RSI: `{row['rsi']:.1f}`", unsafe_allow_html=True)
 else:
-    st.info("No signals yet. Market in neutral zone (RSI 40–60).")
+    st.info("No signals. RSI in neutral zone.")
+
+# === BACKTEST ===
+st.subheader("Mock Backtest")
+signals = df[df['signal'] != 0]
+if not signals.empty:
+    signals['pips'] = np.where(signals['signal'] == 1, 10, -10)
+    win_rate = (signals['pips'] > 0).mean()
+    total_pips = signals['pips'].sum()
+    col1, col2 = st.columns(2)
+    col1.metric("Win Rate", f"{win_rate:.1%}")
+    col2.metric("Pips", f"{total_pips:+}")
+else:
+    st.info("No signals to backtest.")
+
+# === ECONOMIC CALENDAR (Mock) ===
+st.subheader("Economic Calendar")
+calendar = pd.DataFrame({
+    "Time": ["14:00", "16:00", "18:00"],
+    "Event": ["US GDP", "EU CPI", "FOMC"],
+    "Impact": ["High", "Medium", "High"]
+})
+st.table(calendar)
 
 # === CTA ===
+st.markdown("---")
 col1, col2 = st.columns(2)
 with col1:
-    if st.button("Simulate Trade"):
+    if st.button("Simulate Trade", type="primary"):
         st.balloons()
-        st.success("Simulated: +3.2 pips! Upgrade for real-time alerts.")
+        st.success("+3.2 pips!")
 with col2:
     st.markdown("[Get Premium Now](https://buy.stripe.com/test_123)")
 
-st.caption("Disclaimer: Not financial advice. Forex is high-risk. Trade responsibly.")
+st.caption("Not financial advice. Trade responsibly.")
