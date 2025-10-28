@@ -3,6 +3,8 @@ from twelvedata import TDClient
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+# Import the subplot tool
+from plotly.subplots import make_subplots
 from datetime import datetime
 
 # === CONFIG ===
@@ -33,7 +35,10 @@ def apply_theme():
             .sell-signal { color: #ef5350; }
             .stSelectbox > div > div { background-color: #1f1f1f; color: #f0f0f0; }
             .stSlider > div > div { background-color: #333; }
-            .stTable { color: #f0f0f0; }
+            /* Custom styling for calendar impact */
+            .impact-high { color: #ef5350; font-weight: bold; }
+            .impact-medium { color: #ff9800; }
+            .impact-low { color: #26a69a; }
         </style>
         """
     else:  # light
@@ -46,7 +51,10 @@ def apply_theme():
             .sell-signal { color: #dc3545; }
             .stSelectbox > div > div { background-color: #f8f9fa; color: #212529; }
             .stSlider > div > div { background-color: #e9ecef; }
-            .stTable { color: #212529; }
+            /* Custom styling for calendar impact */
+            .impact-high { color: #dc3545; font-weight: bold; }
+            .impact-medium { color: #fd7e14; }
+            .impact-low { color: #28a745; }
         </style>
         """
 
@@ -64,8 +72,8 @@ with col2:
 # === SIDEBAR ===
 st.sidebar.title("PipWizard")
 selected_pair = st.sidebar.selectbox("Select Pair", PAIRS, index=0)
-alert_rsi_low = st.sidebar.slider("Alert RSI <", 20, 40, 30)
-alert_rsi_high = st.sidebar.slider("Alert RSI >", 60, 80, 70)
+alert_rsi_low = st.sidebar.slider("Buy Alert RSI <", 20, 40, 30)
+alert_rsi_high = st.sidebar.slider("Sell Alert RSI >", 60, 80, 70)
 st.sidebar.markdown("---")
 st.sidebar.info("Premium ($9.99/mo): Alerts, 10+ Pairs, Backtesting")
 st.sidebar.markdown("[Get Premium](https://buy.stripe.com/test_123)")
@@ -87,7 +95,7 @@ def fetch_data(symbol):
 
 df = fetch_data(selected_pair)
 if df.empty:
-    st.error("No data. Check connection.")
+    st.error("No data. Check connection or API key.")
     st.stop()
 
 # === SIGNALS ===
@@ -95,6 +103,7 @@ def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
+    # Using rolling mean as in your code
     avg_gain = gain.rolling(window=period, min_periods=1).mean()
     avg_loss = loss.rolling(window=period, min_periods=1).mean()
     rs = avg_gain / avg_loss
@@ -104,68 +113,122 @@ def calculate_rsi(series, period=14):
 df['rsi'] = calculate_rsi(df['close'])
 df['sma_20'] = df['close'].rolling(20).mean()
 df['signal'] = 0
-df.loc[(df['rsi'] < 30) & (df['close'] > df['sma_20']), 'signal'] = 1
-df.loc[(df['rsi'] > 70) & (df['close'] < df['sma_20']), 'signal'] = -1
+# Use sidebar alert levels for signal generation
+df.loc[(df['rsi'] < alert_rsi_low) & (df['close'] > df['sma_20']), 'signal'] = 1
+df.loc[(df['rsi'] > alert_rsi_high) & (df['close'] < df['sma_20']), 'signal'] = -1
 df['confidence'] = (abs(df['rsi'] - 50) / 50).round(3)
+df = df.dropna() # Drop initial NaN values
 
-# === CHART ===
-fig = go.Figure()
+if df.empty:
+    st.warning("Not enough data to calculate indicators. Waiting for more data...")
+    st.stop()
+
+# === CHART (THE BIG FIX) ===
+st.subheader(f"{selected_pair} – Last {len(df)} Minutes")
+
+# Create a figure with 2 rows: 1 for price, 1 for RSI
+fig = make_subplots(
+    rows=2, cols=1,
+    shared_xaxes=True,  # Link the x-axes
+    vertical_spacing=0.05,  # Space between charts
+    row_heights=[0.7, 0.3]  # Price chart 70%, RSI 30%
+)
+
+# --- Price Chart (Row 1) ---
+# Candlestick (keeping your dynamic theme colors)
 fig.add_trace(go.Candlestick(
-    x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'],
+    x=df.index,
+    open=df['open'], high=df['high'], low=df['low'], close=df['close'],
     name="Price",
     increasing_line_color="#26a69a" if st.session_state.theme == "dark" else "#28a745",
     decreasing_line_color="#ef5350" if st.session_state.theme == "dark" else "#dc3545"
-))
-fig.add_trace(go.Scatter(x=df.index, y=df['sma_20'], name="SMA(20)", line=dict(color="#ff9800")))
-fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name="RSI", yaxis="y2", line=dict(color="#9c27b0")))
+), row=1, col=1)
+
+# SMA
+fig.add_trace(go.Scatter(
+    x=df.index, y=df['sma_20'], 
+    name="SMA(20)", line=dict(color="#ff9800")
+), row=1, col=1)
+
+# --- RSI Chart (Row 2) ---
+# RSI Line
+fig.add_trace(go.Scatter(
+    x=df.index, y=df['rsi'], 
+    name="RSI", line=dict(color="#9c27b0")
+), row=2, col=1)
+
+# Add Overbought/Oversold lines from sidebar settings
+fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="red", line_width=1, row=2, col=1)
+fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="green", line_width=1, row=2, col=1)
+
+# --- Layout Updates ---
 fig.update_layout(
-    title=f"{selected_pair} – Last {len(df)} Minutes",
-    yaxis=dict(title="Price"),
-    yaxis2=dict(title="RSI", overlaying="y", side="right", range=[0, 100]),
-    xaxis_rangeslider_visible=False,
+    xaxis_rangeslider_visible=False,  # Hide the range slider
+    # Keep your dynamic theme template
     template="plotly_dark" if st.session_state.theme == "dark" else "plotly_white",
-    height=500
+    height=500,
+    xaxis_showticklabels=True,
+    xaxis2_showticklabels=True,
+    yaxis1_title="Price",
+    yaxis2_title="RSI",
+    yaxis2_range=[0, 100]  # Lock RSI scale
 )
+# Hide x-axis labels on the top chart to avoid repetition
+fig.update_xaxes(showticklabels=False, row=1, col=1)
+
 st.plotly_chart(fig, use_container_width=True)
 
-# === METRICS + SIGNALS ===
-col1, col2, col3 = st.columns(3)
-col1.metric("Price", f"{df['close'].iloc[-1]:.5f}")
-col2.metric("RSI", f"{df['rsi'].iloc[-1]:.1f}")
-col3.metric("SMA(20)", f"{df['sma_20'].iloc[-1]:.5f}")
 
-st.subheader("Latest Signals")
-signals_df = df[df['signal'] != 0].tail(5)
-if not signals_df.empty:
-    for idx, row in signals_df.iterrows():
-        sig = "BUY" if row['signal'] == 1 else "SELL"
-        color_class = "buy-signal" if row['signal'] == 1 else "sell-signal"
-        st.markdown(f"<span class='{color_class}'>**{sig}**</span> at `{idx.strftime('%H:%M')}` | "
-                    f"Price: `{row['close']:.5f}` | RSI: `{row['rsi']:.1f}`", unsafe_allow_html=True)
-else:
-    st.info("No signals. RSI in neutral zone.")
+# === NEW DASHBOARD LAYOUT ===
+col1, col2 = st.columns(2)
 
-# === BACKTEST ===
-st.subheader("Mock Backtest")
-signals = df[df['signal'] != 0]
-if not signals.empty:
-    signals['pips'] = np.where(signals['signal'] == 1, 10, -10)
-    win_rate = (signals['pips'] > 0).mean()
-    total_pips = signals['pips'].sum()
-    col1, col2 = st.columns(2)
-    col1.metric("Win Rate", f"{win_rate:.1%}")
-    col2.metric("Pips", f"{total_pips:+}")
-else:
-    st.info("No signals to backtest.")
+with col1:
+    st.subheader("Live Status")
+    # Get latest data
+    latest = df.iloc[-1]
+    
+    mcol1, mcol2, mcol3 = st.columns(3)
+    mcol1.metric("Price", f"{latest['close']:.5f}")
+    mcol2.metric("RSI", f"{latest['rsi']:.1f}")
+    mcol3.metric("SMA(20)", f"{latest['sma_20']:.5f}")
 
-# === ECONOMIC CALENDAR (Mock) ===
-st.subheader("Economic Calendar")
-calendar = pd.DataFrame({
-    "Time": ["14:00", "16:00", "18:00"],
-    "Event": ["US GDP", "EU CPI", "FOMC"],
-    "Impact": ["High", "Medium", "High"]
-})
-st.table(calendar)
+    st.subheader("Latest Signals")
+    signals_df = df[df['signal'] != 0].tail(5)
+    if not signals_df.empty:
+        for idx, row in signals_df.iterrows():
+            sig = "BUY" if row['signal'] == 1 else "SELL"
+            # Use your custom CSS classes
+            color_class = "buy-signal" if row['signal'] == 1 else "sell-signal"
+            st.markdown(f"<span class='{color_class}'>**{sig}**</span> at `{idx.strftime('%H:%M')}` | "
+                        f"Price: `{row['close']:.5f}` | RSI: `{row['rsi']:.1f}`", unsafe_allow_html=True)
+    else:
+        st.info(f"No signals. RSI at {latest['rsi']:.1f} is in the neutral zone.")
+
+with col2:
+    st.subheader("Mock Backtest")
+    signals = df[df['signal'] != 0]
+    if not signals.empty:
+        signals['pips'] = np.where(signals['signal'] == 1, 10, -10)
+        win_rate = (signals['pips'] > 0).mean()
+        total_pips = signals['pips'].sum()
+        bcol1, bcol2 = st.columns(2)
+        bcol1.metric("Win Rate", f"{win_rate:.1%}")
+        bcol2.metric("Pips", f"{total_pips:+}")
+    else:
+        st.info("No signals to backtest.")
+
+    # === ECONOMIC CALENDAR (Styled) ===
+    st.subheader("Economic Calendar")
+    
+    # Use Markdown for better styling
+    st.markdown(f"""
+    | Time (UTC) | Event | Impact |
+    | :--- | :--- | :--- |
+    | 14:00 | US GDP | <span class='impact-high'>High</span> |
+    | 16:00 | EU CPI | <span class='impact-medium'>Medium</span> |
+    | 18:00 | FOMC | <span class='impact-high'>High</span> |
+    """, unsafe_allow_html=True)
+
 
 # === CTA ===
 st.markdown("---")
@@ -178,3 +241,4 @@ with col2:
     st.markdown("[Get Premium Now](https://buy.stripe.com/test_123)")
 
 st.caption("Not financial advice. Trade responsibly.")
+
