@@ -1,4 +1,4 @@
-alpha_vantage
+twelvedata
 pandas
 numpy
 plotly
