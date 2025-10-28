@@ -1,33 +1,31 @@
 import streamlit as st
-from alpha_vantage.foreignexchange import ForeignExchange
+from twelvedata import TDClient
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # Config
-ALPHA_API_KEY = "QSSK6RC0JXCMF7EN"  # Your Alpha Vantage API key
-TICKER = "EUR/USD"  # Alpha Vantage forex pair format
+TD_API_KEY = "YOUR_TWELVE_DATA_API_KEY_HERE"  # Replace with your key
+TICKER = "EUR/USD"  # Twelve Data forex symbol
 
-@st.cache_data(ttl=60)  # Cache for 1 min to avoid API limits
+@st.cache_data(ttl=60)
 def fetch_data(days_back=1):
-    cc = ForeignExchange(key=ALPHA_API_KEY, output_format='pandas')
+    td = TDClient(apikey=TD_API_KEY)
     try:
-        data, meta = cc.get_currency_exchange_intraday(
-            from_symbol='EUR',
-            to_symbol='USD',
-            interval='1min',
-            outputsize='compact'  # ~100 data points on free tier
-        )
-        df = data
+        ts = td.time_series(
+            symbol=TICKER,
+            interval="1min",
+            outputsize=500  # Up to 500 on free
+        ).as_pandas()
+        df = ts
         if not df.empty:
-            df.index = pd.to_datetime(df.index)
-            df = df.rename(columns={'1. open': 'open', '2. high': 'high', '3. low': 'low', '4. close': 'close'})
-            df = df[['open', 'high', 'low', 'close']].tail(500)  # Limit to recent data
+            df = df.rename(columns={'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close'})
+            df = df[['open', 'high', 'low', 'close']]
         return df
     except Exception as e:
         st.error(f"API error: {str(e)}")
-        return pd.DataFrame()  # Return empty DataFrame on failure
+        return pd.DataFrame()
 
 def calculate_rsi(prices, window=14):
     delta = prices.diff()
