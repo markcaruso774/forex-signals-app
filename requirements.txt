@@ -2,3 +2,4 @@ twelvedata
 pandas
 numpy
 plotly
+TA-Lib  
