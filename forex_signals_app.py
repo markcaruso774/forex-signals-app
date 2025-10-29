@@ -1,8 +1,3 @@
-Here is the **complete and corrected Python code** for the PipWizard Streamlit application, including the fixed economic calendar, backtesting logic, indicator calculations, and the fully rendered multi-plot chart.
-
-The default indicator settings have been slightly adjusted to ensure the backtesting results immediately show some trades (changed $\text{RSI}$ Buy to $35$ and Sell to $65$ in the sliders).
-
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
