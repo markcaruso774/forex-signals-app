@@ -1,222 +1,210 @@
-import streamlit as st
-from twelvedata import TDClient
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime
-import streamlit.components.v1 as components
+import talib
+import math
 
-# === CONFIG ===
-TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05"
+# --- 1. DATA LOADING AND PREPARATION ---
 
-# ALL SUPPORTED PAIRS (Add more anytime!)
-ALL_PAIRS = [
-    "EUR/USD", "GBP/USD", "USD/JPY",
-    "USD/CAD", "AUD/USD", "NZD/USD",
-    "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"
-]
+def load_data():
+    """Mocks loading historical EURUSD H4 data."""
+    # Create mock data for demonstration
+    data = {
+        'timestamp': pd.date_range(start='2024-01-01', periods=100, freq='4H'),
+        'open': np.random.uniform(1.0800, 1.0900, 100).round(5),
+        'high': np.random.uniform(1.0900, 1.1000, 100).round(5),
+        'low': np.random.uniform(1.0700, 1.0800, 100).round(5),
+        'close': np.random.uniform(1.0850, 1.0950, 100).round(5),
+        'volume': np.random.randint(1000, 5000, 100)
+    }
+    df = pd.DataFrame(data)
+    df.set_index('timestamp', inplace=True)
+    
+    # Ensure High > Close/Open and Low < Close/Open for realism
+    df['high'] = df[['open', 'close']].max(axis=1) + 0.0005
+    df['low'] = df[['open', 'close']].min(axis=1) - 0.0005
+    
+    return df
 
-# Free = Only 1, Premium = All
-FREE_PAIR = "EUR/USD"
-PREMIUM_PAIRS = ALL_PAIRS
+# --- 2. INDICATOR AND SIGNAL LOGIC ---
 
-INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "1h": "60min"}
-OUTPUTSIZE = 500
+def generate_signals(df):
+    """Calculates SMA, RSI, and generates BUY/SELL signals."""
+    # Parameters
+    SMA_PERIOD = 20
+    RSI_PERIOD = 14
+    
+    # Calculate Indicators
+    df['SMA'] = talib.SMA(df['close'], timeperiod=SMA_PERIOD)
+    df['RSI'] = talib.RSI(df['close'], timeperiod=RSI_PERIOD)
+    
+    # Generate Signal:
+    # 1 (BUY) if RSI crosses above 50 AND price is above SMA
+    # -1 (SELL) if RSI crosses below 50 AND price is below SMA
+    df['signal'] = 0
+    
+    # BUY logic
+    df.loc[(df['RSI'].shift(1) < 50) & (df['RSI'] > 50) & (df['close'] > df['SMA']), 'signal'] = 1
+    
+    # SELL logic
+    df.loc[(df['RSI'].shift(1) > 50) & (df['RSI'] < 50) & (df['close'] < df['SMA']), 'signal'] = -1
+    
+    return df
 
-# === PAGE CONFIG ===
-st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
+# --- 3. REFINED BACKTESTING FUNCTION ---
 
-# === THEME ===
-if 'theme' not in st.session_state:
-    st.session_state.theme = "dark"
+def run_backtest(df_in, initial_capital=10000, risk_per_trade=0.01):
+    """
+    Simulates trades based on 'signal' column and calculates performance metrics.
+    Uses realistic candlestick high/low checks for SL/TP execution.
+    """
+    df = df_in.copy()
+    
+    # PARAMETERS
+    RISK_PIPS_VALUE = 0.0050 # Approx. 50 pips (e.g., for EUR/USD)
+    REWARD_PIPS_VALUE = 0.0075 # Approx. 75 pips (1.5x Risk/Reward)
+    
+    # Simplified Profit/Loss in USD (Risk 1% of $10,000 = $100)
+    MAX_RISK_USD = initial_capital * risk_per_trade
+    REWARD_USD = MAX_RISK_USD * 1.5
+    
+    trades = []
+    
+    # TRADE SIMULATION
+    # We iterate up to the second to last row because we need the data from i+1
+    for i in range(len(df) - 1): 
+        signal = df.iloc[i]['signal']
+        
+        if signal != 0:
+            # Entry occurs at the Open of the NEXT candle
+            entry_price = df.iloc[i + 1]['open']
+            next_high = df.iloc[i + 1]['high']
+            next_low = df.iloc[i + 1]['low']
+            
+            result = 'NEUTRAL'
+            profit_loss = 0.0
 
-def toggle_theme():
-    st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+            if signal == 1: # BUY Signal
+                stop_loss = entry_price - RISK_PIPS_VALUE
+                take_profit = entry_price + REWARD_PIPS_VALUE
+                
+                # SCENARIO 1: TP was hit first (High >= TP AND Low > SL)
+                if next_high >= take_profit and next_low > stop_loss:
+                    result = 'WIN'
+                    profit_loss = REWARD_USD
+                
+                # SCENARIO 2: SL was hit first (Low <= SL AND High < TP)
+                elif next_low <= stop_loss and next_high < take_profit:
+                    result = 'LOSS'
+                    profit_loss = -MAX_RISK_USD
+                
+                # SCENARIO 3: Both were hit (Tie-breaker: conservative assumption of SL hit)
+                elif next_high >= take_profit and next_low <= stop_loss:
+                    result = 'LOSS'
+                    profit_loss = -MAX_RISK_USD
+            
+            elif signal == -1: # SELL Signal
+                stop_loss = entry_price + RISK_PIPS_VALUE
+                take_profit = entry_price - REWARD_PIPS_VALUE
+                
+                # SCENARIO 1: TP was hit first (Low <= TP AND High < SL)
+                if next_low <= take_profit and next_high < stop_loss:
+                    result = 'WIN'
+                    profit_loss = REWARD_USD
+                
+                # SCENARIO 2: SL was hit first (High >= SL AND Low > TP)
+                elif next_high >= stop_loss and next_low > take_profit:
+                    result = 'LOSS'
+                    profit_loss = -MAX_RISK_USD
 
-def apply_theme():
-    if st.session_state.theme == "dark":
-        return """
-        <style>
-            .stApp { background-color: #0e1117; color: #f0f0f0; }
-            .buy-signal { color: #26a69a; }
-            .sell-signal { color: #ef5350; }
-            .impact-high { color: #ef5350; font-weight: bold; }
-            .impact-medium { color: #ff9800; }
-            .impact-low { color: #26a69a; }
-        </style>
-        """
+                # SCENARIO 3: Both were hit (Tie-breaker: conservative assumption of SL hit)
+                elif next_low <= take_profit and next_high >= stop_loss:
+                    result = 'LOSS'
+                    profit_loss = -MAX_RISK_USD
+            
+            # Record trade only if a clear outcome occurred on the next bar
+            if result != 'NEUTRAL':
+                trades.append({
+                    'entry_time': df.iloc[i+1].name,
+                    'signal': 'BUY' if signal == 1 else 'SELL',
+                    'entry_price': entry_price,
+                    'result': result,
+                    'profit_loss': profit_loss
+                })
+
+    # METRICS CALCULATION
+    trade_df = pd.DataFrame(trades)
+    
+    if trade_df.empty:
+        return 0, 0, 0, 0, initial_capital, trade_df
+
+    total_trades = len(trade_df)
+    winning_trades = len(trade_df[trade_df['result'] == 'WIN'])
+    total_profit = trade_df['profit_loss'].sum()
+    
+    win_rate = winning_trades / total_trades if total_trades > 0 else 0
+    profit_factor = trade_df[trade_df['profit_loss'] > 0]['profit_loss'].sum() / \
+                    abs(trade_df[trade_df['profit_loss'] < 0]['profit_loss'].sum()) if trade_df[trade_df['profit_loss'] < 0]['profit_loss'].sum() != 0 else 999.0
+    
+    final_capital = initial_capital + total_profit
+
+    return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_df
+
+# --- 4. NEW: REAL-TIME ALERTING FUNCTIONS ---
+
+def send_alert_email(signal_type, price):
+    """Mocks sending a real-time email alert to a premium user."""
+    print("\n" + "="*50)
+    print(f"!!! PREMIUM ALERT: {signal_type.upper()} SIGNAL DETECTED !!!")
+    print(f"Instrument: EURUSD (H4)")
+    print(f"Price: {price:.5f}")
+    print(f"Time: {pd.to_datetime('now').strftime('%Y-%m-%d %H:%M:%S')}")
+    print("Email sent to user@premium.com")
+    print("="*50 + "\n")
+
+def check_for_live_signal(df):
+    """Checks the latest bar of the DataFrame for a BUY or SELL signal."""
+    # Assume the last row in the DataFrame is the most recent bar
+    latest_bar = df.iloc[-1]
+    signal = latest_bar['signal']
+    price = latest_bar['close']
+
+    if signal == 1:
+        send_alert_email("BUY", price)
+    elif signal == -1:
+        send_alert_email("SELL", price)
     else:
-        return """
-        <style>
-            .stApp { background-color: #ffffff; color: #212529; }
-            .buy-signal { color: #28a745; }
-            .sell-signal { color: #dc3545; }
-            .impact-high { color: #dc3545; font-weight: bold; }
-            .impact-medium { color: #fd7e14; }
-            .impact-low { color: #28a745; }
-        </style>
-        """
+        print("No new signal detected on the latest bar.")
 
-st.markdown(apply_theme(), unsafe_allow_html=True)
+# --- 5. MAIN EXECUTION BLOCK ---
 
-# === HEADER ===
-col1, col2 = st.columns([6, 1])
-with col1:
-    st.title("PipWizard – Live Forex Signals")
-with col2:
-    theme_label = "Light" if st.session_state.theme == "dark" else "Dark"
-    if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
-        st.rerun()
-
-# === SIDEBAR ===
-st.sidebar.title("PipWizard")
-
-# PREMIUM LOCK
-is_premium = st.sidebar.checkbox("Premium User?", value=False)
-
-if is_premium:
-    selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0)
-    st.sidebar.success(f"Premium Active – {len(PREMIUM_PAIRS)} Pairs")
-else:
-    selected_pair = FREE_PAIR
-    st.sidebar.warning("Free Tier: EUR/USD Only")
-    st.info("Premium unlocks **10+ pairs** → [Get Premium](#)")
-
-selected_interval = st.sidebar.selectbox("Timeframe", list(INTERVALS.keys()), index=0)
-alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 30)
-alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 70)
-st.sidebar.markdown("---")
-st.sidebar.info("Premium ($9.99/mo):\n• 10+ Pairs\n• Real-time Alerts\n• Backtesting")
-st.sidebar.markdown("[Get Premium](https://buy.stripe.com/test_123)")
-
-# === FETCH DATA ===
-@st.cache_data(ttl=60)
-def fetch_data(symbol, interval):
-    td = TDClient(apikey=TD_API_KEY)
-    try:
-        ts = td.time_series(symbol=symbol, interval=INTERVALS[interval], outputsize=OUTPUTSIZE).as_pandas()
-        if ts.empty:
-            return pd.DataFrame()
-        df = ts[['open', 'high', 'low', 'close']].copy()
-        df.index = pd.to_datetime(df.index)
-        return df[::-1].tail(500)
-    except Exception as e:
-        st.error(f"Data Error: {str(e)}")
-        return pd.DataFrame()
-
-df = fetch_data(selected_pair, selected_interval)
-if df.empty:
-    st.error("No data. Check connection or API key.")
-    st.stop()
-
-# === SIGNALS ===
-def calculate_rsi(series, period=14):
-    delta = series.diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=period, min_periods=1).mean()
-    avg_loss = loss.rolling(window=period, min_periods=1).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-df['rsi'] = calculate_rsi(df['close'])
-df['sma_20'] = df['close'].rolling(20).mean()
-df['signal'] = 0
-df.loc[(df['rsi'] < alert_rsi_low) & (df['close'] > df['sma_20']), 'signal'] = 1
-df.loc[(df['rsi'] > alert_rsi_high) & (df['close'] < df['sma_20']), 'signal'] = -1
-df['confidence'] = (abs(df['rsi'] - 50) / 50).round(3)
-df = df.dropna()
-
-if df.empty:
-    st.warning("Waiting for data...")
-    st.stop()
-
-# === CHART ===
-st.subheader(f"{selected_pair} – {selected_interval} – Last {len(df)} Candles")
-
-chart_type = st.radio("Chart Type", ["Candlestick", "Line", "Bar"], horizontal=True, label_visibility="collapsed")
-
-fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.7, 0.3])
-
-if chart_type == "Candlestick":
-    fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'],
-                                 name="Price"), row=1, col=1)
-elif chart_type == "Line":
-    fig.add_trace(go.Scatter(x=df.index, y=df['close'], name="Price", line=dict(color="#2196f3")), row=1, col=1)
-elif chart_type == "Bar":
-    fig.add_trace(go.Ohlc(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="Price"), row=1, col=1)
-
-fig.add_trace(go.Scatter(x=df.index, y=df['sma_20'], name="SMA(20)", line=dict(color="#ff9800")), row=1, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name="RSI", line=dict(color="#9c27b0")), row=2, col=1)
-fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="red", row=2, col=1)
-fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="green", row=2, col=1)
-
-fig.update_layout(
-    xaxis_rangeslider_visible=False,
-    template="plotly_dark" if st.session_state.theme == "dark" else "plotly_white",
-    height=550,
-    yaxis1_title="Price",
-    yaxis2_title="RSI",
-    yaxis2_range=[0, 100]
-)
-st.plotly_chart(fig, use_container_width=True)
-
-# === DASHBOARD ===
-col1, col2 = st.columns(2)
-with col1:
-    st.subheader("Live Status")
-    latest = df.iloc[-1]
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Price", f"{latest['close']:.5f}")
-    m2.metric("RSI", f"{latest['rsi']:.1f}")
-    m3.metric("SMA(20)", f"{latest['sma_20']:.5f}")
-
-    st.subheader("Latest Signals")
-    signals_df = df[df['signal'] != 0].tail(5)
-    if not signals_df.empty:
-        for idx, row in signals_df.iterrows():
-            sig = "BUY" if row['signal'] == 1 else "SELL"
-            color = "buy-signal" if row['signal'] == 1 else "sell-signal"
-            st.markdown(f"<span class='{color}'>**{sig}**</span> `{idx.strftime('%m-%d %H:%M')}` | `{row['close']:.5f}`", unsafe_allow_html=True)
-    else:
-        st.info(f"RSI {latest['rsi']:.1f} – Neutral")
-
-with col2:
-    st.subheader("Mock Backtest")
-    signals = df[df['signal'] != 0].copy()
-    if not signals.empty:
-        signals['pips'] = np.where(signals['signal'] == 1, 10, -10)
-        win_rate = (signals['pips'] > 0).mean()
-        total_pips = signals['pips'].sum()
-        b1, b2 = st.columns(2)
-        b1.metric("Win Rate", f"{win_rate:.1%}")
-        b2.metric("Pips", f"{total_pips:+}")
-    else:
-        st.info("No signals")
-
-    st.subheader("Economic Calendar (Today)")
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    st.markdown(f"""
-    | Date | Time (UTC) | Event | Impact |
-    |------|------------|-------|--------|
-    | {today} | 14:00 | US GDP | <span class='impact-high'>High</span> |
-    | {today} | 16:00 | EU CPI | <span class='impact-medium'>Medium</span> |
-    | {today} | 18:00 | FOMC | <span class='impact-high'>High</span> |
-    """, unsafe_allow_html=True)
-
-# === CTA ===
-st.markdown("---")
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("Simulate Trade", type="primary"):
-        st.balloons()
-        st.success("+3.2 pips!")
-with c2:
-    st.markdown("[Get Premium Now](https://buy.stripe.com/test_123)")
-
-st.caption("Not financial advice. Trade responsibly.")
-
-# === AUTO REFRESH ===
-components.html("<meta http-equiv='refresh' content='61'>", height=0)
+if __name__ == "__main__":
+    # Load Data
+    historical_data = load_data()
+    
+    # Generate Signals
+    df_with_signals = generate_signals(historical_data)
+    
+    # Run Backtest
+    initial_cap = 10000
+    trades_count, win_rate, total_pnl, profit_factor, final_cap, trades_log = run_backtest(df_with_signals, initial_capital=initial_cap)
+    
+    # Display Backtest Results
+    print("\n" + "#"*50)
+    print("## BACKTESTING RESULTS")
+    print("#"*50)
+    print(f"Initial Capital: ${initial_cap:,.2f}")
+    print(f"Total Trades: {trades_count}")
+    print(f"Win Rate: {win_rate:.2%}")
+    print(f"Total Profit/Loss (USD): ${total_pnl:,.2f}")
+    print(f"Profit Factor: {profit_factor:.2f}")
+    print(f"Final Capital: ${final_cap:,.2f}")
+    print("#"*50)
+    
+    # Run Live Signal Check
+    print("## LIVE SIGNAL CHECK (New Feature)")
+    check_for_live_signal(df_with_signals)
+    
+    # Display Trade Log (optional for full detail)
+    if not trades_log.empty:
+        print("\n## Detailed Trade Log (First 5 Trades)")
+        print(trades_log.head())
