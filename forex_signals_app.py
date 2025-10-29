@@ -180,7 +180,7 @@ def apply_theme():
     </style>
     """
 
-    st.markdown(apply_theme(), unsafe_allow_html=True)
+    st.markdown(apply_theme(), unsafe_allow_html=True) # <-- This line was indented, now fixed.
 
 # === HEADER ===
 col1, col2 = st.columns([6, 1])
@@ -279,8 +279,8 @@ st.sidebar.info("Premium ($9.99/mo):\n• 10+ Pairs\n• Real-time Alerts\n• V
 
 # === FETCH DATA & CALCULATE INDICATORS ===
 # This will now call the REAL API function
-    st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
-    df = fetch_data(selected_pair, INTERVALS[selected_interval])
+with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."): # <-- This line was indented, now fixed.
+    df = fetch_data(selected_pair, INTERVALS[selected_interval]) # <-- This line was indented, now fixed.
 
 if df.empty:
     st.error("Failed to load data. The API might be down or your key is invalid.")
@@ -595,5 +595,3 @@ if is_premium: # Only check for alerts if premium
 
 # === AUTO-REFRESH COMPONENT ===
 components.html("<meta http-equiv='refresh' content='61'>", height=0)
-
-v
