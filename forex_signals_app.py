@@ -534,4 +534,3 @@ st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 # === LIVE SIGNAL ALERT CHECK (FINAL STEP) ===
 check_for_live_signal(df, selected_pair)
-```
