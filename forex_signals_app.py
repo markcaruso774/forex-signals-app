@@ -1,11 +1,11 @@
 import streamlit as st
-# from twelvedata import TDClient # Removed as we are using mock data
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import talib # Now correctly assumed to be installed via requirements.txt
+import streamlit.components.v1 as components 
+import talib 
 
 # === CONFIG ===
 TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05" # Mock Key
@@ -66,7 +66,7 @@ def fetch_data(symbol, interval):
     return df.dropna().tail(OUTPUTSIZE)
 
 
-# === HELPER FUNCTIONS (Alerts) ===
+# === HELPER FUNCTIONS (Alerts & Calendar) ===
 
 def send_alert_email(signal_type, price, pair):
     """Mocks sending a real-time email alert to a premium user."""
@@ -83,6 +83,20 @@ def check_for_live_signal(df, pair):
         send_alert_email("BUY", price, pair)
     elif signal == -1:
         send_alert_email("SELL", price, pair)
+
+def display_news_calendar():
+    """Embeds an interactive Forex Economic Calendar widget."""
+    st.subheader("📰 Forex Economic Calendar")
+    
+    # This embed code uses a standard dark theme and colored bull/star impact.
+    calendar_html = """
+    <div style="height:470px; margin-top: 10px;">
+        <iframe src="https://ssltsw.forexprostools.com/?columns=exc_currency,exc_importance&importance=3&features=datepicker,timezone&countries=110,72,25,34,5,43,10,37,79,35,42,12,6,41,51,77,22,55,59,48,107,24,17,47,19,92,36,20,39,121,46,57,93,94,23,56,66,61,26,108,122,60,7,89,75,90,53,67,14,33,30,4,82,62,49,15,3,9,87,13,85,99,28,40,63,68,96,29,103,16,106,73,83,74,91,95,76,38,50,44,45,71,84,100,52,58,69,80,95&header-text=Economic%20Calendar&palette=dark&timezone=12&v=2" 
+        width="100%" height="450" frameborder="0" allowfullscreen style="border-radius: 5px;"></iframe>
+    </div>
+    """
+    
+    components.html(calendar_html, height=480)
 
 
 # === THEME ===
@@ -144,27 +158,43 @@ show_rsi = st.sidebar.checkbox("Show RSI Chart", value=True)
 show_macd = st.sidebar.checkbox("Show MACD Chart", value=True) 
 
 st.sidebar.markdown("**RSI / SMA (Signal)**")
-rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14) 
-sma_period = st.sidebar.slider("SMA Period", 10, 50, 20) 
-alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 30)
-alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 70)
+# --- INPUT VALIDATION START (RSI/SMA) ---
+rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period') 
+sma_period = st.sidebar.slider("SMA Period", 10, 50, 20, key='sma_period') 
+alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 30, key='rsi_low')
+alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 70, key='rsi_high')
+
+if alert_rsi_low >= alert_rsi_high:
+    st.sidebar.error("RSI Buy threshold must be lower than Sell threshold.")
+    st.stop()
 
 # MACD CONTROLS
 st.sidebar.markdown("**MACD (Confirmation)**")
-macd_fast = st.sidebar.slider("MACD Fast Period", 1, 26, 12)
-macd_slow = st.sidebar.slider("MACD Slow Period", 13, 50, 26)
-macd_signal = st.sidebar.slider("MACD Signal Period", 1, 15, 9)
+macd_fast = st.sidebar.slider("MACD Fast Period", 1, 26, 12, key='macd_fast')
+macd_slow = st.sidebar.slider("MACD Slow Period", 13, 50, 26, key='macd_slow')
+macd_signal = st.sidebar.slider("MACD Signal Period", 1, 15, 9, key='macd_signal')
+
+if macd_fast >= macd_slow:
+    st.sidebar.error("MACD Fast Period must be shorter than Slow Period.")
+    st.stop()
+# --- INPUT VALIDATION END (RSI/SMA/MACD) ---
 
 
 # === BACKTESTING PARAMETERS ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("Backtesting Parameters")
 
-initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000)
-risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0) / 100
+initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
+risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
 
-sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=10, max_value=200, value=50)
-tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=10, max_value=300, value=75)
+sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
+tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=300, value=75, key='tp_pips')
+
+# --- INPUT VALIDATION START (Backtesting) ---
+if sl_pips <= 0 or tp_pips <= 0:
+    st.sidebar.error("SL and TP must be greater than 0 pips.")
+    st.stop()
+# --- INPUT VALIDATION END (Backtesting) ---
 
 st.sidebar.markdown("---")
 st.sidebar.info("Premium ($9.99/mo):\n• 10+ Pairs\n• Real-time Alerts\n• Vectorized Backtesting")
@@ -199,7 +229,7 @@ df.loc[(df['rsi'] > alert_rsi_high) & (df['close'] < df['sma']), 'signal'] = -1
 
 df = df.dropna()
 if df.empty:
-    st.warning("Waiting for sufficient data...")
+    st.warning("Waiting for sufficient data after indicator calculation...")
     st.stop()
 
 
@@ -207,7 +237,6 @@ if df.empty:
 def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips):
     """
     Vectorized trade simulation based on 'signal' column and adjustable SL/TP pips.
-    Uses numpy.where for fast conditional execution.
     """
     df = df_in.copy()
     
@@ -344,6 +373,11 @@ if is_premium:
 
     st.subheader("Detailed Trade Log")
     st.dataframe(trade_df, use_container_width=True)
+
+# --- NEWS CALENDAR SECTION ---
+st.markdown("---")
+display_news_calendar()
+st.markdown("---")
 
 
 # === CHART & LIVE SIGNAL CHECK ===
