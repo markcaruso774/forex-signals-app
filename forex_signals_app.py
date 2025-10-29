@@ -1,14 +1,11 @@
 import streamlit as st
-from twelvedata import TDClient
+# from twelvedata import TDClient # Removed as we are using mock data
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
-import streamlit.components.v1 as components
-import time
-import math
-import talib 
+import talib # Now correctly assumed to be installed via requirements.txt
 
 # === CONFIG ===
 TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05" # Mock Key
@@ -31,7 +28,7 @@ OUTPUTSIZE = 500
 # === PAGE CONFIG ===
 st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
 
-# Mock function for data fetching
+# Mock function for data fetching (FIXED: Converts numpy array to Pandas Series)
 @st.cache_data(ttl=60)
 def fetch_data(symbol, interval):
     """Mocks loading historical data for demonstration purposes."""
@@ -49,8 +46,14 @@ def fetch_data(symbol, interval):
     base_price = 1.0850
     noise = np.random.randn(periods) * 0.001 
     
-    close = base_price + np.cumsum(noise)
-    open_p = close.shift(1).fillna(base_price)
+    # Calculate price series (NumPy array)
+    close_array = base_price + np.cumsum(noise)
+    
+    # CONVERSION FIX: Convert to a Pandas Series with index BEFORE using .shift()/.fillna()
+    close_series = pd.Series(close_array, index=timestamps)
+    close = close_series # Use the series for the final DataFrame
+
+    open_p = close_series.shift(1).fillna(base_price)
     
     high = np.maximum(open_p, close) + np.abs(np.random.randn(periods) * 0.0001)
     low = np.minimum(open_p, close) - np.abs(np.random.randn(periods) * 0.0001)
@@ -200,7 +203,7 @@ if df.empty:
     st.stop()
 
 
-# === VECTORIZED BACKTESTING FUNCTION ===
+# === VECTORIZED BACKTESTING FUNCTION (OPTIMIZED) ===
 def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips):
     """
     Vectorized trade simulation based on 'signal' column and adjustable SL/TP pips.
