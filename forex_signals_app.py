@@ -615,7 +615,12 @@ fig.update_yaxes(title_text="Price", row=1, col=1)
 if show_rsi:
     fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=rsi_row, col=1)
     fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=rsi_row, col=1)
-    fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a6S9a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
+    
+    # --- THIS IS THE FIX ---
+    # Changed "#26a6S9a" to "#26a69a"
+    fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
+    # --- END FIX ---
+
     fig.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=rsi_row, col=1)
     fig.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=rsi_row, col=1)
 
@@ -697,10 +702,6 @@ if is_premium:
                         
                         if data_with_signal.empty:
                             continue
-
-                        # --- OLD FIX REMOVED ---
-                        # data_with_signal.name = pair 
-                        # --- END OLD FIX ---
 
                         # --- FIXED CALL: Pass 'pair' as the 'pair_name' ---
                         total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
