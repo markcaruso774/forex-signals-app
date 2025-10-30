@@ -58,7 +58,7 @@ with col2:
     if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
         st.rerun()
 
-# === NEW: ABOUT THE APP SECTION ===
+# === NEW: ABOUT THE APP SECTION (with Price) ===
 with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
     st.markdown(
         """
@@ -100,13 +100,13 @@ with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."
         * ✅ **All Timeframes:** Test your strategies on any timeframe (1min to 1h).
         * 🔒 **Limited to EUR/USD:** All backtesting and live signals are limited to the **EUR/USD** pair.
 
-        **⭐ Premium Tier (The "All-in-One" Upgrade):**
+        **⭐ Premium Tier ($29.99 / month):**
         * ✅ **Unlock All 10+ Currency Pairs:** Unlock all pairs (GBP/USD, USD/JPY, etc.) for backtesting and live signals.
         * ✅ **🚀 Strategy Scanner:** Get full access to the powerful "heatmap" scanner.
         * ✅ **Live Signal Alerts:** Receive the "ALERT SENT" notifications in your sidebar.
         * *(Includes all Free Tier features, of course!)*
 
-        You can upgrade at any time by clicking the links in the sidebar!
+        You can upgrade at any time by clicking the "Upgrade" button in the sidebar!
         """
     )
 # === END ABOUT SECTION ===
@@ -116,7 +116,7 @@ with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."
 st.sidebar.title("PipWizard")
 
 # PREMIUM LOCK
-is_premium = st.sidebar.checkbox("Premium User?", value=True)
+is_premium = st.sidebar.checkbox("Premium User?", value=False) # Default to Free
 
 if is_premium:
     selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0)
@@ -124,7 +124,26 @@ if is_premium:
 else:
     selected_pair = FREE_PAIR
     st.sidebar.warning("Free Tier: EUR/USD Only")
-    st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
+    
+    # --- NEW: UPGRADE CALL TO ACTION ---
+    st.sidebar.markdown("---")
+    with st.sidebar.container(border=True):
+        st.subheader("⭐ Upgrade to Premium")
+        st.markdown("**$29.99 / month**")
+        st.markdown(
+            """
+            • Unlock all 10+ pairs\n
+            • Unlock the Strategy Scanner\n
+            • Get Live Signal Alerts
+            """
+        )
+        # This is a mock button. In a real app, this would lead to a checkout page.
+        if st.button("Get Premium Now", type="primary", use_container_width=True):
+            # Simulate a successful upgrade for the demo
+            st.session_state.is_premium = True # A real app would handle this post-payment
+            st.rerun()
+    st.sidebar.markdown("---")
+    # --- END NEW ---
 
 # TIMEFRAME SELECTOR
 selected_interval = st.sidebar.selectbox(
@@ -198,20 +217,6 @@ if 'backtest_results' in st.session_state:
         del st.session_state.backtest_results
         st.rerun()
 # --- End of Buttons ---
-
-
-st.sidebar.markdown("---")
-st.sidebar.info(
-    """
-    **🎁 Free Tier:**\n
-    Full backtesting on EUR/USD only.
-
-    **⭐ Upgrade to Premium:**\n
-    • Unlock all pairs\n
-    • Unlock Strategy Scanner\n
-    • Get Live Signal Alerts
-    """
-)
 
 
 # === HELPER FUNCTIONS (Alerts & Calendar) ===
@@ -439,6 +444,7 @@ if df.empty:
     st.stop()
 
 # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
+# This is now available to ALL users
 if run_backtest_button:
     with st.spinner("Running backtest on real market data..."):
         total_trades, win_rate, total_profit, profit_factor, final_capital, trade_df, resolved_trades_df = run_backtest(
@@ -474,6 +480,7 @@ if 'backtest_results' in st.session_state:
     st.dataframe(results['trade_df'], use_container_width=True)
 elif not 'backtest_results' in st.session_state:
     st.markdown("---")
+    # This info is now shown to ALL users
     st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
 # === MAIN CHART ===
@@ -639,7 +646,8 @@ if is_premium:
                 else:
                     st.info("Scan completed, but no trades were found with these settings.")
 else:
-     st.info("The **🚀 Strategy Scanner** is a Premium feature. Upgrade to compare all strategies at once!")
+    st.markdown("---") # Add a separator for free users
+    st.info("The **🚀 Strategy Scanner** is a Premium feature. Upgrade to compare all strategies at once!")
 
 
 # === RISK DISCLAIMER ===
@@ -655,3 +663,4 @@ st.warning(
 
 # === AUTO-REFRESH COMPONENT ===
 components.html("<meta http-equiv='refresh' content='61'>", height=0)
+
