@@ -9,8 +9,8 @@ import talib
 from twelvedata import TDClient
 
 # === CONFIG ===
-# !!! IMPORTANT: Replace with your REAL Twelve Data API Key
-TD_API_KEY = "e02de9a60165478aaf1da8a7b2096e05" # This is a mock key
+# The dangerous TD_API_KEY line has been REMOVED.
+# The key is now read from st.secrets in the fetch_data function.
 
 ALL_PAIRS = [
     "EUR/USD", "GBP/USD", "USD/JPY",
@@ -58,7 +58,7 @@ with col2:
     if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
         st.rerun()
 
-# === NEW: ABOUT THE APP SECTION (with Price) ===
+# === NEW: ABOUT THE APP SECTION ===
 with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
     st.markdown(
         """
@@ -100,13 +100,13 @@ with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."
         * ✅ **All Timeframes:** Test your strategies on any timeframe (1min to 1h).
         * 🔒 **Limited to EUR/USD:** All backtesting and live signals are limited to the **EUR/USD** pair.
 
-        **⭐ Premium Tier ($29.99 / month):**
+        **⭐ Premium Tier (The "All-in-One" Upgrade):**
         * ✅ **Unlock All 10+ Currency Pairs:** Unlock all pairs (GBP/USD, USD/JPY, etc.) for backtesting and live signals.
         * ✅ **🚀 Strategy Scanner:** Get full access to the powerful "heatmap" scanner.
         * ✅ **Live Signal Alerts:** Receive the "ALERT SENT" notifications in your sidebar.
         * *(Includes all Free Tier features, of course!)*
 
-        You can upgrade at any time by clicking the "Upgrade" button in the sidebar!
+        You can upgrade at any time by clicking the links in the sidebar!
         """
     )
 # === END ABOUT SECTION ===
@@ -116,7 +116,7 @@ with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."
 st.sidebar.title("PipWizard")
 
 # PREMIUM LOCK
-is_premium = st.sidebar.checkbox("Premium User?", value=False) # Default to Free
+is_premium = st.sidebar.checkbox("Premium User?", value=True)
 
 if is_premium:
     selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0)
@@ -124,26 +124,7 @@ if is_premium:
 else:
     selected_pair = FREE_PAIR
     st.sidebar.warning("Free Tier: EUR/USD Only")
-    
-    # --- NEW: UPGRADE CALL TO ACTION ---
-    st.sidebar.markdown("---")
-    with st.sidebar.container(border=True):
-        st.subheader("⭐ Upgrade to Premium")
-        st.markdown("**$29.99 / month**")
-        st.markdown(
-            """
-            • Unlock all 10+ pairs\n
-            • Unlock the Strategy Scanner\n
-            • Get Live Signal Alerts
-            """
-        )
-        # This is a mock button. In a real app, this would lead to a checkout page.
-        if st.button("Get Premium Now", type="primary", use_container_width=True):
-            # Simulate a successful upgrade for the demo
-            st.session_state.is_premium = True # A real app would handle this post-payment
-            st.rerun()
-    st.sidebar.markdown("---")
-    # --- END NEW ---
+    st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
 
 # TIMEFRAME SELECTOR
 selected_interval = st.sidebar.selectbox(
@@ -219,11 +200,45 @@ if 'backtest_results' in st.session_state:
 # --- End of Buttons ---
 
 
+st.sidebar.markdown("---")
+st.sidebar.info(
+    """
+    **🎁 Free Tier:**\n
+    Full backtesting on EUR/USD only.
+
+    **⭐ Upgrade to Premium:**\n
+    • Unlock all pairs\n
+    • Unlock Strategy Scanner\n
+    • Get Live Signal Alerts
+    """
+)
+
+
 # === HELPER FUNCTIONS (Alerts & Calendar) ===
 @st.cache_data(ttl=60)
 def fetch_data(symbol, interval):
     """Fetches real market data from Twelve Data."""
-    td = TDClient(apikey=TD_API_KEY)
+    
+    # --- THIS IS THE SECURE CHANGE ---
+    # It now reads the key securely from Streamlit Secrets
+    try:
+        # Check if secrets are available (when deployed)
+        if 'TD_API_KEY' in st.secrets:
+            api_key = st.secrets["TD_API_KEY"]
+        else:
+            # Fallback for local development (if you still want to run it locally)
+            # This is NOT your real key, just an example.
+            # You would need to create a local .streamlit/secrets.toml for this to work.
+            st.warning("TD_API_KEY not found in Streamlit Secrets. App may not fetch data.")
+            api_key = "YOUR_FALLBACK_KEY_IF_NEEDED" # This won't work, but prevents crash
+        
+        td = TDClient(apikey=api_key)
+
+    except Exception as e:
+        st.error(f"Failed to initialize API. Make sure key is set in Streamlit Secrets.")
+        return pd.DataFrame()
+    # --- END OF CHANGE ---
+    
     try:
         ts = td.time_series(
             symbol=symbol,
@@ -242,7 +257,7 @@ def fetch_data(symbol, interval):
     except Exception as e:
         st.error(f"API Error fetching {symbol}: {str(e)}")
         if "API key" in str(e):
-             st.error("Please ensure your Twelve Data API key is correct.")
+             st.error("Please ensure your Twelve Data API key is correct and has not expired.")
         return pd.DataFrame()
 
 def send_alert_email(signal_type, price, pair):
@@ -444,7 +459,6 @@ if df.empty:
     st.stop()
 
 # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
-# This is now available to ALL users
 if run_backtest_button:
     with st.spinner("Running backtest on real market data..."):
         total_trades, win_rate, total_profit, profit_factor, final_capital, trade_df, resolved_trades_df = run_backtest(
@@ -480,7 +494,6 @@ if 'backtest_results' in st.session_state:
     st.dataframe(results['trade_df'], use_container_width=True)
 elif not 'backtest_results' in st.session_state:
     st.markdown("---")
-    # This info is now shown to ALL users
     st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
 # === MAIN CHART ===
@@ -508,6 +521,7 @@ fig.update_yaxes(title_text="Price", row=1, col=1)
 if show_rsi:
     fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=rsi_row, col=1)
     fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=rsi_row, col=1)
+    # --- THIS IS THE TYPO FIX ---
     fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
     fig.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=rsi_row, col=1)
     fig.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=rsi_row, col=1)
@@ -646,8 +660,7 @@ if is_premium:
                 else:
                     st.info("Scan completed, but no trades were found with these settings.")
 else:
-    st.markdown("---") # Add a separator for free users
-    st.info("The **🚀 Strategy Scanner** is a Premium feature. Upgrade to compare all strategies at once!")
+     st.info("The **🚀 Strategy Scanner** is a Premium feature. Upgrade to compare all strategies at once!")
 
 
 # === RISK DISCLAIMER ===
