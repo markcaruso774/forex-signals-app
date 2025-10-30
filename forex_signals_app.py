@@ -499,7 +499,7 @@ def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips, pair_
 
 
 # === RUN BACKTESTING ON BUTTON CLICK ===
-if is_premium and run_backtest_button:
+if run_backtest_button: # <-- MODIFIED: Removed 'is_premium' check
     with st.spinner("Running backtest on real market data..."):
         # --- FIXED CALL: Pass 'selected_pair' as the 'pair_name' ---
         total_trades, win_rate, total_profit, profit_factor, final_capital, trade_df, resolved_trades_df = run_backtest(
@@ -523,7 +523,7 @@ if is_premium and run_backtest_button:
     st.rerun() # Rerun to show results immediately
 
 # === DISPLAY BACKTESTING IF RESULTS EXIST ===
-if is_premium and 'backtest_results' in st.session_state:
+if 'backtest_results' in st.session_state: # <-- MODIFIED: Removed 'is_premium' check
     results = st.session_state.backtest_results
     
     st.markdown("---")
@@ -557,7 +557,7 @@ if is_premium and 'backtest_results' in st.session_state:
     st.subheader("Detailed Trade Log")
     st.dataframe(results['trade_df'], use_container_width=True)
 
-elif is_premium and not 'backtest_results' in st.session_state:
+elif not 'backtest_results' in st.session_state: # <-- MODIFIED: Removed 'is_premium' check
     st.markdown("---")
     st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
@@ -772,4 +772,5 @@ Always trade responsibly and adhere strictly to your risk management plan. Never
 
 # === AUTO-REFRESH COMPONENT (MUST BE LAST) ===
 components.html("<meta http-equiv='refresh' content='61'>", height=0)
+
 
