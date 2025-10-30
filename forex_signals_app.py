@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 import streamlit.components.v1 as components
 import talib
-from twelvedata import TDClient # <--- IMPORTED REAL API CLIENT
+from twelvedata import TDClient
 
 # === CONFIG ===
 # !!! IMPORTANT: Replace with your REAL Twelve Data API Key
@@ -180,7 +180,7 @@ def apply_theme():
     </style>
     """
 
-    st.markdown(apply_theme(), unsafe_allow_html=True) # <-- This line was indented, now fixed.
+st.markdown(apply_theme(), unsafe_allow_html=True)
 
 # === HEADER ===
 col1, col2 = st.columns([6, 1])
@@ -218,7 +218,14 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Strategy Selection")
 strategy_name = st.sidebar.selectbox(
     "Choose a Strategy",
-    ["RSI + SMA Crossover", "MACD Crossover"]
+    [
+        "RSI + SMA Crossover",      # Original
+        "MACD Crossover",           # Original
+        "RSI + MACD (Confluence)",  # New
+        "SMA + MACD (Confluence)",  # New
+        "RSI Standalone",           # New
+        "SMA Crossover Standalone"  # New
+    ]
 )
 # === END NEW ===
 
@@ -279,8 +286,8 @@ st.sidebar.info("Premium ($9.99/mo):\n• 10+ Pairs\n• Real-time Alerts\n• V
 
 # === FETCH DATA & CALCULATE INDICATORS ===
 # This will now call the REAL API function
-with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."): # <-- This line was indented, now fixed.
-    df = fetch_data(selected_pair, INTERVALS[selected_interval]) # <-- This line was indented, now fixed.
+with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
+    df = fetch_data(selected_pair, INTERVALS[selected_interval])
 
 if df.empty:
     st.error("Failed to load data. The API might be down or your key is invalid.")
@@ -323,11 +330,49 @@ def apply_strategy(df, strategy_name):
         df.loc[buy_cond, 'signal'] = 1
         df.loc[sell_cond, 'signal'] = -1
         
-    # --- ADD MORE STRATEGIES HERE ---
-    # elif strategy_name == "Your New Strategy Name":
-    #    st.sidebar.info("Using...")
-    #    # Add your logic for 'signal' = 1 or -1
-    #    pass
+    # --- ADDED NEW STRATEGIES ---
+    
+    elif strategy_name == "RSI + MACD (Confluence)":
+        st.sidebar.info("Using RSI + MACD. Checks for both conditions.")
+        # Buy: RSI is oversold AND MACD crosses up
+        buy_cond_1 = (df['rsi'] < alert_rsi_low)
+        buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
+        df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
+        
+        # Sell: RSI is overbought AND MACD crosses down
+        sell_cond_1 = (df['rsi'] > alert_rsi_high)
+        sell_cond_2 = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
+        df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
+
+    elif strategy_name == "SMA + MACD (Confluence)":
+        st.sidebar.info("Using SMA + MACD. Checks for trend + momentum.")
+        # Buy: Price is above SMA AND MACD crosses up
+        buy_cond_1 = (df['close'] > df['sma'])
+        buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
+        df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
+        
+        # Sell: Price is below SMA AND MACD crosses down
+        sell_cond_1 = (df['close'] < df['sma'])
+        sell_cond_2 = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
+        df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
+
+    elif strategy_name == "RSI Standalone":
+        st.sidebar.info("Using RSI Standalone. Adjust RSI sliders.")
+        # Buy: RSI *enters* oversold
+        buy_cond = (df['rsi'] < alert_rsi_low) & (df['rsi'].shift(1) >= alert_rsi_low)
+        # Sell: RSI *enters* overbought
+        sell_cond = (df['rsi'] > alert_rsi_high) & (df['rsi'].shift(1) <= alert_rsi_high)
+        df.loc[buy_cond, 'signal'] = 1
+        df.loc[sell_cond, 'signal'] = -1
+
+    elif strategy_name == "SMA Crossover Standalone":
+        st.sidebar.info("Using SMA Crossover. Adjust SMA slider.")
+        # Buy: Price crosses *above* SMA
+        buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
+        # Sell: Price crosses *below* SMA
+        sell_cond = (df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1))
+        df.loc[buy_cond, 'signal'] = 1
+        df.loc[sell_cond, 'signal'] = -1
 
     return df
 
@@ -595,3 +640,4 @@ if is_premium: # Only check for alerts if premium
 
 # === AUTO-REFRESH COMPONENT ===
 components.html("<meta http-equiv='refresh' content='61'>", height=0)
+
