@@ -384,16 +384,17 @@ if df.empty:
 
 
 # === (FIXED) BACKTESTING FUNCTION ===
-def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips):
+# --- NEW FUNCTION SIGNATURE: Added 'pair_name' ---
+def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips, pair_name):
     df = df_in.copy()
     trades = []
     
-    # Determine pip value based on JPY pair or not
-    # This is the line that caused the error: `df_in.name`
-    if "JPY" in df_in.name:
+    # --- FIXED LOGIC: Use 'pair_name' argument ---
+    if "JPY" in pair_name:
          PIP_MULTIPLIER = 0.01
     else:
          PIP_MULTIPLIER = 0.0001
+    # --- END FIX ---
 
     RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER
     REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
@@ -500,11 +501,12 @@ def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips):
 # === RUN BACKTESTING ON BUTTON CLICK ===
 if is_premium and run_backtest_button:
     with st.spinner("Running backtest on real market data..."):
-        # Pass the pair name to the backtest function
-        df.name = selected_pair 
+        # --- FIXED CALL: Pass 'selected_pair' as the 'pair_name' ---
         total_trades, win_rate, total_profit, profit_factor, final_capital, trade_df, resolved_trades_df = run_backtest(
-            df, initial_capital, risk_pct, sl_pips, tp_pips
+            df, initial_capital, risk_pct, sl_pips, tp_pips, selected_pair
         )
+        # --- END FIX ---
+        
         # Store results in session state
         st.session_state.backtest_results = {
             "total_trades": total_trades,
@@ -613,7 +615,7 @@ fig.update_yaxes(title_text="Price", row=1, col=1)
 if show_rsi:
     fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=rsi_row, col=1)
     fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=rsi_row, col=1)
-    fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
+    fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a6S9a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
     fig.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=rsi_row, col=1)
     fig.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=rsi_row, col=1)
 
@@ -678,8 +680,6 @@ if is_premium:
                         progress_bar.progress(int(job_count / total_jobs * 100))
                         continue
                     
-                    data.name = pair # Set name for backtest pip calculation
-                    
                     # Calculate indicators once
                     data = calculate_indicators(data, 
                         scan_params["rsi_p"], scan_params["sma_p"], 
@@ -693,22 +693,21 @@ if is_premium:
                         
                         # Apply strategy
                         data_with_signal = apply_strategy(data.copy(), strategy, scan_params["rsi_low"], scan_params["rsi_high"])
-                        
-                        # --- THIS IS THE FIX ---
-                        # Re-assign the name to the copied dataframe
-                        data_with_signal.name = pair
-                        # --- END FIX ---
-                        
                         data_with_signal = data_with_signal.dropna()
                         
                         if data_with_signal.empty:
                             continue
 
-                        # Run backtest
+                        # --- OLD FIX REMOVED ---
+                        # data_with_signal.name = pair 
+                        # --- END OLD FIX ---
+
+                        # --- FIXED CALL: Pass 'pair' as the 'pair_name' ---
                         total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
                             data_with_signal, scan_params["capital"], scan_params["risk"], 
-                            scan_params["sl"], scan_params["tp"]
+                            scan_params["sl"], scan_params["tp"], pair
                         )
+                        # --- END FIX ---
                         
                         if total_trades > 0:
                             scan_results.append({
