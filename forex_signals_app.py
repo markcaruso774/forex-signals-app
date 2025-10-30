@@ -20,6 +20,15 @@ ALL_PAIRS = [
 FREE_PAIR = "EUR/USD"
 PREMIUM_PAIRS = ALL_PAIRS
 
+ALL_STRATEGIES = [
+    "RSI + SMA Crossover",
+    "MACD Crossover",
+    "RSI + MACD (Confluence)",
+    "SMA + MACD (Confluence)",
+    "RSI Standalone",
+    "SMA Crossover Standalone"
+]
+
 # FULL TIMEFRAMES SUPPORTED
 INTERVALS = {
     "1min": "1min", "5min": "5min", "15min": "15min",
@@ -43,7 +52,7 @@ def fetch_data(symbol, interval):
         ).as_pandas()
         
         if ts is None or ts.empty:
-            st.error(f"No data returned for {symbol}. Check API key or symbol.")
+            # Don't show error, just return empty frame for scanner
             return pd.DataFrame()
         
         # Clean column names, parse index, and reverse
@@ -218,14 +227,7 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Strategy Selection")
 strategy_name = st.sidebar.selectbox(
     "Choose a Strategy",
-    [
-        "RSI + SMA Crossover",      # Original
-        "MACD Crossover",           # Original
-        "RSI + MACD (Confluence)",  # New
-        "SMA + MACD (Confluence)",  # New
-        "RSI Standalone",           # New
-        "SMA Crossover Standalone"  # New
-    ]
+    ALL_STRATEGIES # Use the list from the top
 )
 # === END NEW ===
 
@@ -293,19 +295,21 @@ if df.empty:
     st.error("Failed to load data. The API might be down or your key is invalid.")
     st.stop()
 
-def calculate_indicators(df):
-    df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_period)
-    df['sma'] = df['close'].rolling(sma_period).mean()
+# === MODIFIED: calculate_indicators function now takes parameters ===
+def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
+    df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
+    df['sma'] = df['close'].rolling(sma_p).mean()
     df['macd_line'], df['macd_signal'], df['macd_hist'] = talib.MACD(
-        df['close'], fastperiod=macd_fast, slowperiod=macd_slow, signalperiod=macd_signal
+        df['close'], fastperiod=macd_f, slowperiod=macd_sl, signalperiod=macd_sig
     )
     return df
 
 with st.spinner("Calculating indicators..."):
-    df = calculate_indicators(df)
+    # Calculate for the main chart using sidebar values
+    df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
 
-# === NEW: STRATEGY APPLICATION FUNCTION ===
-def apply_strategy(df, strategy_name):
+# === MODIFIED: apply_strategy function now takes parameters ===
+def apply_strategy(df, strategy_name, rsi_low, rsi_high):
     """
     Applies the selected trading strategy logic to the DataFrame.
     Returns a DataFrame with a 'signal' column (1=Buy, -1=Sell, 0=Neutral).
@@ -313,15 +317,11 @@ def apply_strategy(df, strategy_name):
     df['signal'] = 0 # Initialize signal column
     
     if strategy_name == "RSI + SMA Crossover":
-        # This is your original, proven strategy logic
-        st.sidebar.info("Using RSI + SMA strategy. Adjust RSI/SMA sliders.")
-        df.loc[(df['rsi'] < alert_rsi_low) & (df['close'] > df['sma']), 'signal'] = 1
-        df.loc[(df['rsi'] > alert_rsi_high) & (df['close'] < df['sma']), 'signal'] = -1
+        # Uses 'rsi' and 'sma' columns, which were calculated using sidebar parameters
+        df.loc[(df['rsi'] < rsi_low) & (df['close'] > df['sma']), 'signal'] = 1
+        df.loc[(df['rsi'] > rsi_high) & (df['close'] < df['sma']), 'signal'] = -1
 
     elif strategy_name == "MACD Crossover":
-        # This is a new example strategy
-        st.sidebar.info("Using MACD Crossover strategy. Adjust MACD sliders.")
-        
         # Find where macd_line crosses *above* macd_signal
         buy_cond = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
         # Find where macd_line crosses *below* macd_signal
@@ -330,22 +330,18 @@ def apply_strategy(df, strategy_name):
         df.loc[buy_cond, 'signal'] = 1
         df.loc[sell_cond, 'signal'] = -1
         
-    # --- ADDED NEW STRATEGIES ---
-    
     elif strategy_name == "RSI + MACD (Confluence)":
-        st.sidebar.info("Using RSI + MACD. Checks for both conditions.")
         # Buy: RSI is oversold AND MACD crosses up
-        buy_cond_1 = (df['rsi'] < alert_rsi_low)
+        buy_cond_1 = (df['rsi'] < rsi_low)
         buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
         df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
         
         # Sell: RSI is overbought AND MACD crosses down
-        sell_cond_1 = (df['rsi'] > alert_rsi_high)
+        sell_cond_1 = (df['rsi'] > rsi_high)
         sell_cond_2 = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
         df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
 
     elif strategy_name == "SMA + MACD (Confluence)":
-        st.sidebar.info("Using SMA + MACD. Checks for trend + momentum.")
         # Buy: Price is above SMA AND MACD crosses up
         buy_cond_1 = (df['close'] > df['sma'])
         buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
@@ -357,16 +353,14 @@ def apply_strategy(df, strategy_name):
         df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
 
     elif strategy_name == "RSI Standalone":
-        st.sidebar.info("Using RSI Standalone. Adjust RSI sliders.")
         # Buy: RSI *enters* oversold
-        buy_cond = (df['rsi'] < alert_rsi_low) & (df['rsi'].shift(1) >= alert_rsi_low)
+        buy_cond = (df['rsi'] < rsi_low) & (df['rsi'].shift(1) >= rsi_low)
         # Sell: RSI *enters* overbought
-        sell_cond = (df['rsi'] > alert_rsi_high) & (df['rsi'].shift(1) <= alert_rsi_high)
+        sell_cond = (df['rsi'] > rsi_high) & (df['rsi'].shift(1) <= rsi_high)
         df.loc[buy_cond, 'signal'] = 1
         df.loc[sell_cond, 'signal'] = -1
 
     elif strategy_name == "SMA Crossover Standalone":
-        st.sidebar.info("Using SMA Crossover. Adjust SMA slider.")
         # Buy: Price crosses *above* SMA
         buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
         # Sell: Price crosses *below* SMA
@@ -376,11 +370,12 @@ def apply_strategy(df, strategy_name):
 
     return df
 
-# === END NEW FUNCTION ===
+# === END MODIFIED FUNCTION ===
 
 # === APPLY STRATEGY LOGIC ===
 with st.spinner(f"Applying Strategy: {strategy_name}..."):
-    df = apply_strategy(df, strategy_name) # <-- Replaced old hard-coded logic
+    # Apply for the main chart using sidebar values
+    df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high) 
 
 df = df.dropna()
 if df.empty:
@@ -567,10 +562,10 @@ elif is_premium and not 'backtest_results' in st.session_state:
 # --- NEWS CALENDAR SECTION ---
 st.markdown("---")
 display_news_calendar()
-st.markdown("---")
 
 
 # === CHART & LIVE SIGNAL CHECK ===
+st.markdown("---")
 num_rows = 1
 row_heights = [0.7]
 if show_rsi: num_rows += 1; row_heights.append(0.15)
@@ -638,6 +633,136 @@ st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 if is_premium: # Only check for alerts if premium
     check_for_live_signal(df, selected_pair)
 
-# === AUTO-REFRESH COMPONENT ===
+
+# === NEW: STRATEGY SCANNER (MOVED TO BOTTOM & STYLED) ===
+if is_premium:
+    st.markdown("---")
+    with st.expander("🚀 Strategy Scanner (Premium Pro Feature)"):
+        st.markdown("""
+        Test multiple strategies across different pairs and timeframes at once. 
+        **Warning:** This will perform many API calls and may be slow.
+        """)
+        
+        # Scanner Controls
+        scan_pairs = st.multiselect("Select Pairs to Scan", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
+        scan_intervals = st.multiselect("Select Timeframes to Scan", list(INTERVALS.keys()), default=["15min", "1h"])
+        scan_strategies = st.multiselect("Select Strategies to Scan", ALL_STRATEGIES, default=["RSI Standalone", "MACD Crossover"])
+        
+        run_scan_button = st.button("Run Full Scan", type="primary")
+
+        if run_scan_button:
+            scan_results = []
+            total_jobs = len(scan_pairs) * len(scan_intervals) * len(scan_strategies)
+            st.info(f"Starting {total_jobs} backtests... This will take time.")
+            progress_bar = st.progress(0)
+            job_count = 0
+            
+            # Use default, fixed parameters for the scan
+            # You can customize these from the sidebar if you prefer
+            scan_params = {
+                "rsi_p": rsi_period, "sma_p": sma_period, "macd_f": macd_fast, "macd_sl": macd_slow, "macd_sig": macd_signal,
+                "rsi_low": alert_rsi_low, "rsi_high": alert_rsi_high, "sl": sl_pips, "tp": tp_pips, 
+                "capital": initial_capital, "risk": risk_pct
+            }
+
+            for pair in scan_pairs:
+                for interval_key in scan_intervals:
+                    interval_val = INTERVALS[interval_key]
+                    
+                    # Fetch data once per pair/interval
+                    data = fetch_data(pair, interval_val)
+                    if data.empty:
+                        st.warning(f"Skipping {pair}@{interval_key}: No data.")
+                        job_count += len(scan_strategies)
+                        progress_bar.progress(int(job_count / total_jobs * 100))
+                        continue
+                    
+                    data.name = pair # Set name for backtest pip calculation
+                    
+                    # Calculate indicators once
+                    data = calculate_indicators(data, 
+                        scan_params["rsi_p"], scan_params["sma_p"], 
+                        scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
+
+                    for strategy in scan_strategies:
+                        job_count += 1
+                        progress_text = f"Testing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})"
+                        st.text(progress_text)
+                        progress_bar.progress(int(job_count / total_jobs * 100))
+                        
+                        # Apply strategy
+                        data_with_signal = apply_strategy(data.copy(), strategy, scan_params["rsi_low"], scan_params["rsi_high"])
+                        data_with_signal = data_with_signal.dropna()
+                        
+                        if data_with_signal.empty:
+                            continue
+
+                        # Run backtest
+                        total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
+                            data_with_signal, scan_params["capital"], scan_params["risk"], 
+                            scan_params["sl"], scan_params["tp"]
+                        )
+                        
+                        if total_trades > 0:
+                            scan_results.append({
+                                "Pair": pair,
+                                "Timeframe": interval_key,
+                                "Strategy": strategy,
+                                "Total Profit ($)": total_profit,
+                                "Win Rate (%)": win_rate * 100,
+                                "Profit Factor": pf,
+                                "Total Trades": total_trades
+                            })
+            
+            st.success("Scan Complete!")
+            if scan_results:
+                results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False)
+                
+                # --- NEW: STYLING FOR "BEAUTIFUL & COLOURFUL" ---
+                def style_profit(val):
+                    color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else ('#f0f0f0' if st.session_state.theme == 'dark' else '#212529')
+                    return f'color: {color}; font-weight: bold;'
+
+                def style_win_rate(val):
+                    # Simple gradient: 50% is neutral, 100% is green, 0% is red
+                    val_norm = val / 100.0
+                    red = int(255 * (1 - val_norm))
+                    green = int(255 * val_norm)
+                    # Use a subtle background alpha
+                    bg_color = f'rgba({red}, {green}, 0, 0.3)'
+                    return f'background-color: {bg_color};'
+                
+                def style_pf(val):
+                    color = '#26a69a' if val > 1 else '#ef5350' if val < 1 else ('#f0f0f0' if st.session_state.theme == 'dark' else '#212529')
+                    return f'color: {color};'
+
+                results_df_styled = results_df.style \
+                    .apply(lambda s: s.map(style_profit), subset=['Total Profit ($)']) \
+                    .apply(lambda s: s.map(style_win_rate), subset=['Win Rate (%)']) \
+                    .apply(lambda s: s.map(style_pf), subset=['Profit Factor']) \
+                    .format({
+                        "Total Profit ($)": "${:,.2f}",
+                        "Win Rate (%)": "{:,.2f}%",
+                        "Profit Factor": "{:,.2f}",
+                    })
+                
+                st.dataframe(results_df_styled, use_container_width=True)
+                # --- END NEW STYLING ---
+
+            else:
+                st.warning("No profitable trades found in this scan.")
+
+# === NEW: RISK DISCLAIMER (MOVED TO BOTTOM) ===
+st.markdown("---")
+st.subheader("⚠️ Risk Disclaimer")
+st.warning("""
+Trading Foreign Exchange (Forex) involves significant risk and is not suitable for all investors. 
+All information and signals provided by this application are for **educational and simulation purposes only.**
+
+Past performance is not an indicator of future results. Any backtesting results are hypothetical and do not guarantee future performance. 
+Always trade responsibly and adhere strictly to your risk management plan. Never risk more than you are willing to lose.
+""")
+
+# === AUTO-REFRESH COMPONENT (MUST BE LAST) ===
 components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
