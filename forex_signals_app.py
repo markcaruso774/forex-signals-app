@@ -389,6 +389,7 @@ def run_backtest(df_in, initial_capital, risk_per_trade, sl_pips, tp_pips):
     trades = []
     
     # Determine pip value based on JPY pair or not
+    # This is the line that caused the error: `df_in.name`
     if "JPY" in df_in.name:
          PIP_MULTIPLIER = 0.01
     else:
@@ -692,6 +693,12 @@ if is_premium:
                         
                         # Apply strategy
                         data_with_signal = apply_strategy(data.copy(), strategy, scan_params["rsi_low"], scan_params["rsi_high"])
+                        
+                        # --- THIS IS THE FIX ---
+                        # Re-assign the name to the copied dataframe
+                        data_with_signal.name = pair
+                        # --- END FIX ---
+                        
                         data_with_signal = data_with_signal.dropna()
                         
                         if data_with_signal.empty:
