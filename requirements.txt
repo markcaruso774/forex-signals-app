@@ -8,3 +8,4 @@ streamlit
 gcloud
 google-cloud-storage
 setuptools
+requests
