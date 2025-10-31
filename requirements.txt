@@ -5,3 +5,5 @@ plotly
 TA-Lib  
 pyrebase4
 streamlit
+gcloud
+google-cloud-storage
