@@ -1,15 +1,15 @@
 import streamlit as st
-import pandas as pd
+import pandas as pd  # Make sure pandas is imported
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, timedelta  # Added timedelta
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
-import requests  # New: For Paystack API
+import requests  # For Paystack & Calendar
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -121,15 +121,12 @@ def create_payment_link(email, user_id):
         "Content-Type": "application/json"
     }
     
-    # --- RECTIFIED: Removed the broken auto-detect code ---
-    # We now ONLY get the URL from secrets. This is more robust.
     if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
         st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
         st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
         return None, None
         
     APP_URL = st.secrets["APP_URL"]
-    # --- END RECTIFICATION ---
 
     payload = {
         "email": email,
@@ -300,6 +297,21 @@ elif st.session_state.page == "app" and st.session_state.user:
         return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
+            .results-box {{
+                border: 1px solid {'#555' if dark else '#ddd'};
+                border-radius: 5px;
+                padding: 10px;
+                margin-top: -10px;
+                margin-bottom: 10px;
+                background-color: {'#1a1a1a' if dark else '#f9f9f9'};
+            }}
+            .results-text {{
+                font-size: 0.9em;
+                color: {'#bbb' if dark else '#333'};
+            }}
+            .actual-good {{ color: #26a69a; font-weight: bold; }}
+            .actual-bad {{ color: #ef5350; font-weight: bold; }}
+            .actual-neutral {{ color: {'#f0f0f0' if dark else '#212529'}; font-weight: bold; }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
 
@@ -333,7 +345,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
             ### Feature Tiers: Free vs. Premium
             **🎁 Free Tier (Your Current Plan):**
-            * ✅ **Economic News Calendar**
+            * ✅ **Economic News Calendar** (Real-time data from Twelve Data)
             * ✅ **Full Backtesting Engine**
             * ✅ **All 6 Strategies** & All Timeframes
             * 🔒 **Limited to EUR/USD** only.
@@ -391,7 +403,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
-    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=300, value=75, key='tp_pips')
+    
+    # --- RECTIFIED: Changed TP default to 100 ---
+    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') # <-- VALUE IS NOW 100
+    
     if sl_pips <= 0 or tp_pips <= 0: st.sidebar.error("SL and TP must be greater than 0."); st.stop()
     
     st.sidebar.markdown("---")
@@ -453,45 +468,137 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- RECTIFIED: display_news_calendar ---
+    # --- RECTIFIED: display_news_calendar (REAL API + DYNAMIC + RESULTS) ---
     def display_news_calendar():
-        st.subheader("Forex Economic Calendar (Today & Tomorrow)")
+        st.subheader("Upcoming Economic Calendar (Next 7 Days)")
 
-        # Create datetime objects
-        today_obj = datetime.utcnow()
-        tomorrow_obj = today_obj + pd.Timedelta(days=1)
+        # Search bar
+        search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
-        # Store the objects, not strings
-        events = [
-            {"date": today_obj, "time": "13:30", "event": "US Nonfarm Payrolls", "impact": "high"},
-            {"date": today_obj, "time": "14:00", "event": "US Unemployment Rate", "impact": "high"},
-            {"date": today_obj, "time": "15:00", "event": "ISM Manufacturing PMI", "impact": "medium"},
-            {"date": tomorrow_obj, "time": "12:30", "event": "ECB Interest Rate Decision", "impact": "high"},
-            {"date": tomorrow_obj, "time": "14:00", "event": "US Retail Sales", "impact": "medium"},
-        ]
+        # Fetch real data from Twelve Data
+        @st.cache_data(ttl=300)  # 5-minute cache
+        def get_calendar():
+            try:
+                # Get events from yesterday (to see results) and next 7 days
+                today = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+                end = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
+                
+                if "TD_API_KEY" not in st.secrets:
+                    st.error("TD_API_KEY not found for calendar. Please check secrets.")
+                    return pd.DataFrame()
+                    
+                url = "https://api.twelvedata.com/economic_calendar"
+                params = {
+                    "apikey": st.secrets["TD_API_KEY"],
+                    "country": "US,GB,EU,AU,CA,NZ,JP,CH", 
+                    "start_date": today,
+                    "end_date": end,
+                    "outputsize": 100
+                }
+                r = requests.get(url, params=params, timeout=15)
+                if r.status_code == 200:
+                    data = r.json().get("events", []) 
+                    if data:
+                        df = pd.DataFrame(data)
+                        df["date_dt"] = pd.to_datetime(df["datetime"])
+                        df["date"] = df["date_dt"].dt.strftime("%A, %b %d") # e.g., Friday, Nov 01
+                        df["time"] = df["date_dt"].dt.strftime("%H:%M")
+                        df["impact"] = df["impact"].str.capitalize()
+                        df = df.rename(columns={"name": "event"})
+                        # Keep the new results columns
+                        return df[["date", "time", "event", "impact", "country", "previous", "forecast", "actual", "date_dt"]].dropna(subset=["time"])
+                else:
+                    st.error(f"Calendar API error: {r.status_code} - {r.text}")
+                    
+            except Exception as e:
+                st.error(f"Calendar processing error: {e}")
+            return pd.DataFrame()
 
-        # Get string representations for filtering
-        today_date_str = today_obj.strftime("%Y-%m-%d")
-        tomorrow_date_str = tomorrow_obj.strftime("%Y-%m-%d")
+        with st.spinner("Loading economic calendar..."):
+            df = get_calendar()
 
-        # Filter by comparing the date part of the datetime object
-        today_events = [e for e in events if e["date"].strftime("%Y-%m-%d") in [today_date_str, tomorrow_date_str]]
+        if df.empty:
+            st.info("No major events in the next 7 days or API unavailable.")
+            if st.button("Refresh Calendar"):
+                st.cache_data.clear()
+                st.rerun()
+            return
 
-        if today_events:
-            is_dark = st.session_state.theme == 'dark'
-            table_bg_header, table_color_header, table_color_text, table_border_color = ('#1f1f1f', '#ccc', '#f0f0f0', '#333') if is_dark else ('#e9ecef', '#212529', '#212529', '#dee2e6')
-            calendar_html = f"""<style>.calendar-table{{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0;color:{table_color_text};}}.calendar-table th{{background-color:{table_bg_header};color:{table_color_header};padding:10px 8px;text-align:left;font-weight:600;}}.calendar-table td{{padding:8px;border-bottom:1px solid {table_border_color};}}.impact-high{{color:#FF4136;font-weight:bold;}}.impact-medium{{color:#A0522D;font-weight:bold;}}.impact-low{{color:#A9A9A9;font-weight:bold;}}</style><table class="calendar-table"><tr><th>Date</th><th>Time (UTC)</th><th>Event</th><th>Impact</th></tr>"""
+        # Filter
+        if search:
+            df = df[df["event"].str.contains(search, case=False, na=False)]
+
+        # Impact colors and emojis
+        impact_color = {"High": "#FF4136", "Medium": "#FF851B", "Low": "#AAAAAA"}
+        impact_emoji = {"High": "🔴", "Medium": "🟠", "Low": "⚪️"}
+
+        # Legend
+        cols = st.columns(3)
+        with cols[0]: st.markdown(f"**{impact_emoji['High']} High**")
+        with cols[1]: st.markdown(f"**{impact_emoji['Medium']} Medium**")
+        with cols[2]: st.markdown(f"**{impact_emoji['Low']} Low**")
+        st.markdown("---")
+
+        # Group by date
+        for date in sorted(df["date"].unique()):
+            st.markdown(f"### {date} (UTC)")
+            day_df = df[df["date"] == date].sort_values("time")
             
-            for e in today_events:
-                impact_class = {"high": "impact-high", "medium": "impact-medium", "low": "impact-low"}.get(e["impact"], "impact-low")
-                # No more strptime! Just format the object directly.
-                display_date = e['date'].strftime("%b %d") 
-                calendar_html += f"""<tr><td>{display_date}</td><td>{e['time']}</td><td>{e['event']}</td><td><span class='{impact_class}'>• {e['impact'].title()}</span></td></tr>"""
-            
-            calendar_html += "</table>"; components.html(calendar_html, height=250, scrolling=False)
-        else: 
-            st.info("No major events scheduled.")
-    # --- END RECTIFICATION ---
+            for _, row in day_df.iterrows():
+                # --- This is the new, smarter display logic ---
+                
+                # 1. Main Event Line
+                impact_str = row['impact']
+                styled_impact = f'<span style="color:{impact_color.get(impact_str, "#f0f0f0")}; font-weight:bold;">{impact_emoji.get(impact_str, "⚪️")} {impact_str}</span>'
+                st.markdown(f"**{row['time']}** | {row['event']} ({row['country']}) | {styled_impact}", unsafe_allow_html=True)
+                
+                # 2. Results/Forecast Line (in a styled box)
+                results_html = "<div class='results-box'><span class='results-text'>"
+                
+                # Check if the event has passed (has an 'actual' value)
+                if pd.notna(row['actual']):
+                    # Try to convert to numbers for comparison
+                    try:
+                        actual_val = float(row['actual'])
+                        forecast_val = float(row['forecast'])
+                        if actual_val > forecast_val:
+                            actual_class = 'actual-good'
+                        elif actual_val < forecast_val:
+                            actual_class = 'actual-bad'
+                        else:
+                            actual_class = 'actual-neutral'
+                    except:
+                        actual_class = 'actual-neutral' # Can't compare, just show as neutral
+                        
+                    results_html += f"**Actual: <span class='{actual_class}'>{row['actual']}</span>** | "
+                    results_html += f"Forecast: {row['forecast']} | "
+                    results_html += f"Previous: {row['previous']}"
+                
+                # Else, if it's an upcoming event, show forecast
+                elif pd.notna(row['forecast']):
+                    results_html += f"**Forecast: {row['forecast']}** | Previous: {row['previous']}"
+                
+                # Else, just show previous if it's all we have
+                elif pd.notna(row['previous']):
+                    results_html += f"Previous: {row['previous']}"
+                
+                # If no data at all, don't show the box
+                else:
+                    results_html = ""
+
+                if results_html:
+                    results_html += "</span></div>"
+                    st.markdown(results_html, unsafe_allow_html=True)
+                
+                st.markdown("---") # Separator for each event
+                
+        # Refresh button
+        if st.button("Refresh Calendar"):
+            st.cache_data.clear()
+            st.rerun()
+
+        st.caption("Data: Twelve Data API • Times in UTC")
+    # --- END OF RECTIFIED FUNCTION ---
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
@@ -608,9 +715,13 @@ elif st.session_state.page == "app" and st.session_state.user:
         col_p.metric("Total Profit ($)", f"{results['total_profit']:,.2f}", delta=f"{(results['total_profit']/initial_capital):.2%}")
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
         st.subheader("Equity Curve")
-        if not results['resolved_trades_df'].empty:
+        
+        # FIX: Check for the correct key 'resolved_trades_df'
+        resolved_df_key = 'resolved_trades_df' if 'resolved_trades_df' in results else 'resolved_trades_ _df'
+        
+        if resolved_df_key in results and not results[resolved_df_key].empty:
             equity_fig = go.Figure()
-            equity_fig.add_trace(go.Scatter(x=results['resolved_trades_df']['exit_time'], y=results['resolved_trades_df']['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
+            equity_fig.add_trace(go.Scatter(x=results[resolved_df_key]['exit_time'], y=results[resolved_df_key]['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
             equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
@@ -664,7 +775,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
-    display_news_calendar()
+    display_news_calendar() # <-- This now calls the REAL, new function
     st.markdown("---")
 
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
@@ -675,7 +786,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", [ "RSI Standalone", "MACD Crossover"], default=["RSI Standalone", "MACD Crossover"])
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 75}
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -756,3 +867,4 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
+
