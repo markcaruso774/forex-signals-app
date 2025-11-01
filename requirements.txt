@@ -9,3 +9,5 @@ gcloud
 google-cloud-storage
 setuptools
 requests
+feedparser
+python-dateutil
