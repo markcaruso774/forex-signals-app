@@ -9,7 +9,7 @@ import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
-import requests  # For Paystack API
+import requests  # New: For Paystack API
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -59,7 +59,6 @@ def sign_up(email, password):
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        # Store user info in Realtime Database
         user_data = {"email": email, "subscription_status": "free"}
         db.child("users").child(user['localId']).set(user_data)
         st.session_state.is_premium = False
@@ -71,7 +70,7 @@ def sign_up(email, password):
             error_json = e.args[1]
             error_message = json.loads(error_json).get('error', {}).get('message', error_message)
         except:
-            pass # Use the default error message
+            pass
         st.error(f"Failed to create account: {error_message}")
 
 def login(email, password):
@@ -81,7 +80,6 @@ def login(email, password):
     try:
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        # Fetch user status from Realtime Database
         user_data = db.child("users").child(user['localId']).get().val()
         if user_data and user_data.get("subscription_status") == "premium":
             st.session_state.is_premium = True
@@ -104,12 +102,11 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS ===
+# === 4. PAYSTACK PAYMENT FUNCTIONS (RECTIFIED) ===
 
 def create_payment_link(email, user_id):
     """
     Calls Paystack API to create a one-time payment link.
-    We use a fixed test amount (e.g., 100 NGN) for this test.
     """
     
     test_amount_kobo = 10000 # 100 NGN * 100 kobo
@@ -124,21 +121,15 @@ def create_payment_link(email, user_id):
         "Content-Type": "application/json"
     }
     
-    APP_URL = st.secrets.get("APP_URL", "")
-    if not APP_URL:
-        # Try to get the URL from the server if not in secrets (for dev)
-        try:
-            from streamlit.web.server.server_util import get_server_instance
-            server = get_server_instance()
-            APP_URL = "https://" + server.get_url("") # Construct full URL
-        except Exception as e:
-             st.warning(f"Could not auto-detect URL: {e}. Using blank.")
-             APP_URL = "" # Fallback
-             
-    if not APP_URL:
+    # --- RECTIFIED: Removed the broken auto-detect code ---
+    # We now ONLY get the URL from secrets. This is more robust.
+    if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
         st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
         st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
         return None, None
+        
+    APP_URL = st.secrets["APP_URL"]
+    # --- END RECTIFICATION ---
 
     payload = {
         "email": email,
@@ -765,4 +756,3 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
-
