@@ -1,19 +1,18 @@
 import streamlit as st
-import pandas as pd  # Make sure pandas is imported
+import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta  # Added timedelta
+from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
-import pyrebase  # For Firebase
-import json      # For Firebase
-import requests  # For Paystack & Calendar
+import pyrebase
+import json
+import requests
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
-    """Loads Firebase config from Streamlit Secrets and initializes the app."""
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
             st.error("Firebase config not found in Streamlit Secrets.")
@@ -49,7 +48,7 @@ if 'user' not in st.session_state:
 if 'is_premium' not in st.session_state:
     st.session_state.is_premium = False
 if 'page' not in st.session_state:
-    st.session_state.page = "login" # Start on 'login'
+    st.session_state.page = "login"
 
 # === 3. AUTHENTICATION FUNCTIONS ===
 def sign_up(email, password):
@@ -102,15 +101,9 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS (RECTIFIED) ===
-
+# === 4. PAYSTACK PAYMENT FUNCTIONS ===
 def create_payment_link(email, user_id):
-    """
-    Calls Paystack API to create a one-time payment link.
-    """
-    
-    test_amount_kobo = 10000 # 100 NGN * 100 kobo
-    
+    test_amount_kobo = 10000
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
@@ -131,7 +124,7 @@ def create_payment_link(email, user_id):
     payload = {
         "email": email,
         "amount": test_amount_kobo, 
-        "callback_url": APP_URL, # Redirect back to the main app
+        "callback_url": APP_URL,
         "metadata": {
             "user_id": user_id,
             "user_email": email,
@@ -142,7 +135,6 @@ def create_payment_link(email, user_id):
     try:
         response = requests.post(url, headers=headers, json=payload)
         response_data = response.json()
-        
         if response_data.get("status"):
             auth_url = response_data["data"]["authorization_url"]
             reference = response_data["data"]["reference"]
@@ -155,9 +147,6 @@ def create_payment_link(email, user_id):
         return None, None
 
 def verify_payment(reference):
-    """
-    Calls Paystack to verify a transaction reference.
-    """
     if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Services not initialized.")
         return False
@@ -165,28 +154,22 @@ def verify_payment(reference):
     try:
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
-        
         response = requests.get(url, headers=headers)
         response_data = response.json()
 
         if response_data.get("status") and response_data["data"]["status"] == "success":
             st.success("Payment successful! Your account is now Premium.")
-            
             metadata = response_data["data"].get("metadata", {})
             user_id = metadata.get("user_id")
-            
             if user_id:
-                # Update user's status in Firebase
                 db.child("users").child(user_id).update({"subscription_status": "premium"})
                 st.session_state.is_premium = True
                 st.balloons()
-                st.session_state.page = "app" # Go back to the main app
-                
+                st.session_state.page = "app"
                 try:
                     st.query_params.clear()
                 except:
                     pass 
-                
                 st.rerun()
             else:
                 st.error("Could not find user_id in payment metadata. Please contact support.")
@@ -194,22 +177,20 @@ def verify_payment(reference):
         else:
             st.error("Payment verification failed. Please try again or contact support.")
             return False
-            
     except Exception as e:
         st.error(f"Error verifying payment: {e}")
         return False
 
 # === 5. LOGIN/SIGN UP PAGE ===
 if st.session_state.page == "login":
-    st.set_page_config(page_title="Login - PipWizard", page_icon="💹", layout="centered")
-
+    st.set_page_config(page_title="Login - PipWizard", page_icon="Chart", layout="centered")
     if auth is None or db is None:
-        st.title("PipWizard 💹")
+        st.title("PipWizard Chart")
         st.error("Application failed to initialize.")
         st.warning("Could not connect to the authentication service.")
         st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue.")
     else:
-        st.title(f"Welcome to PipWizard 💹")
+        st.title(f"Welcome to PipWizard Chart")
         st.text("Please log in or sign up to continue.")
         action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
         email = st.text_input("Email")
@@ -232,62 +213,50 @@ if st.session_state.page == "login":
 
 # === 6. PROFILE / UPGRADE PAGE ===
 elif st.session_state.page == "profile":
-    st.set_page_config(page_title="Profile - PipWizard", page_icon="💹", layout="centered")
-    
-    st.title(f"Profile & Subscription 💹")
-    
+    st.set_page_config(page_title="Profile - PipWizard", page_icon="Chart", layout="centered")
+    st.title(f"Profile & Subscription Chart")
     if st.session_state.user and 'email' in st.session_state.user:
         st.write(f"Logged in as: `{st.session_state.user['email']}`")
-    
     if st.session_state.is_premium:
         st.success("You are a **Premium User**!")
         st.write("All features, pairs, and the Strategy Scanner are unlocked.")
     else:
         st.warning("You are on the **Free Tier**.")
         st.markdown(f"Upgrade to **Premium ($29.99/month)** to unlock all pairs, live alerts, and the Strategy Scanner.")
-        
         if st.button("Upgrade to Premium Now! (Test Payment: 100 NGN)", type="primary"):
             with st.spinner("Connecting to Paystack..."):
                 user_email = st.session_state.user['email']
                 user_id = st.session_state.user['localId']
-                
                 auth_url, reference = create_payment_link(user_email, user_id) 
-                
                 if auth_url:
                     st.info("Redirecting you to Paystack to complete your payment...")
                     st.markdown(f'If you are not redirected, [**Click Here to Pay**]({auth_url})', unsafe_allow_html=True)
                     components.html(f'<meta http-equiv="refresh" content="0; url={auth_url}">', height=0)
                 else:
                     st.error("Could not initiate payment. Please try again.")
-
     st.markdown("---")
     if st.button("Back to App"):
         st.session_state.page = "app"
         st.rerun()
-        
     if st.button("Logout", type="secondary"):
         logout()
 
 # === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
-    st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
+    st.set_page_config(page_title="PipWizard", page_icon="Chart", layout="wide")
 
-    # --- NEW: Check for Payment Callback ---
     query_params = st.query_params
     if "trxref" in query_params:
         reference = query_params["trxref"]
         with st.spinner(f"Verifying your payment ({reference})..."):
             verify_payment(reference)
-    # --- End Payment Check ---
 
-    # === CONFIG ===
     ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
     FREE_PAIR = "EUR/USD"
     PREMIUM_PAIRS = ALL_PAIRS
     INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
     OUTPUTSIZE = 500
 
-    # === THEME ===
     if 'theme' not in st.session_state:
         st.session_state.theme = "dark"
     def toggle_theme():
@@ -297,35 +266,23 @@ elif st.session_state.page == "app" and st.session_state.user:
         return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
-            .results-box {{
-                border: 1px solid {'#555' if dark else '#ddd'};
-                border-radius: 5px;
-                padding: 10px;
-                margin-top: -10px;
-                margin-bottom: 10px;
-                background-color: {'#1a1a1a' if dark else '#f9f9f9'};
-            }}
-            .results-text {{
-                font-size: 0.9em;
-                color: {'#bbb' if dark else '#333'};
-            }}
+            .results-box {{ border: 1px solid {'#555' if dark else '#ddd'}; border-radius: 5px; padding: 10px; margin-top: -10px; margin-bottom: 10px; background-color: {'#1a1a1a' if dark else '#f9f9f9'}; }}
+            .results-text {{ font-size: 0.9em; color: {'#bbb' if dark else '#333'}; }}
             .actual-good {{ color: #26a69a; font-weight: bold; }}
             .actual-bad {{ color: #ef5350; font-weight: bold; }}
             .actual-neutral {{ color: {'#f0f0f0' if dark else '#212529'}; font-weight: bold; }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
 
-    # === HEADER ===
     col1, col2 = st.columns([6, 1])
     with col1:
         st.title("PipWizard – Live Forex Signals")
     with col2:
-        theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
+        theme_label = "Light" if st.session_state.theme == "dark" else "Dark"
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === ABOUT THE APP SECTION ===
-    with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
+    with st.expander("Welcome to PipWizard! Click here to learn about the app."):
         st.markdown(
             f"""
             ### What is PipWizard?
@@ -337,35 +294,32 @@ elif st.session_state.page == "app" and st.session_state.user:
                 * Use the sidebar to pick a strategy (`RSI Standalone`, etc.) and set your `Stop Loss` and `Take Profit`.
                 * Click the **"Run Backtest"** button to see a full report, including an **Equity Curve** and **Trade Log**.
             2.  **Step 2: FIND THE BEST STRATEGY (Premium Feature)**
-                * Open the **"🚀 Strategy Scanner"** at the bottom of the page.
+                * Open the **"Strategy Scanner"** at the bottom of the page.
                 * This "heatmap" tool tests all strategies across all pairs and timeframes at once.
             3.  **Step 3: ACTIVATE LIVE SIGNALS (Premium Feature)**
                 * Set your chosen parameters in the sidebar. The app will run in "live" mode, showing signals on the chart as they happen.
                 * Premium users will also receive an "ALERT SENT" in the sidebar.
 
             ### Feature Tiers: Free vs. Premium
-            **🎁 Free Tier (Your Current Plan):**
-            * ✅ **Economic News Calendar** (Real-time data from Twelve Data)
-            * ✅ **Full Backtesting Engine**
-            * ✅ **All 6 Strategies** & All Timeframes
-            * 🔒 **Limited to EUR/USD** only.
+            **Free Tier (Your Current Plan):**
+            * Economic News Calendar (Real-time data from Twelve Data)
+            * Full Backtesting Engine
+            * All 6 Strategies & All Timeframes
+            * Limited to EUR/USD only.
 
-            **⭐ Premium Tier ($29.99/month):**
+            **Premium Tier ($29.99/month):**
             Upgrade for **$29.99/month** to unlock every feature:
-            * ✅ **Unlock All 10+ Currency Pairs**
-            * ✅ **🚀 Strategy Scanner**
-            * ✅ **Live Signal Alerts**
+            * Unlock All 10+ Currency Pairs
+            * Strategy Scanner
+            * Live Signal Alerts
             """
         )
     
-    # === SIDEBAR & CONTROLS ===
     st.sidebar.title("PipWizard")
-    
     user_email = "User"
     if st.session_state.user and 'email' in st.session_state.user:
         user_email = st.session_state.user['email']
     st.sidebar.write(f"Logged in as: `{user_email}`")
-    
     is_premium = st.session_state.is_premium
 
     if is_premium:
@@ -403,10 +357,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
-    
-    # --- RECTIFIED: Changed TP default to 100 ---
-    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') # <-- VALUE IS NOW 100
-    
+    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips')
     if sl_pips <= 0 or tp_pips <= 0: st.sidebar.error("SL and TP must be greater than 0."); st.stop()
     
     st.sidebar.markdown("---")
@@ -419,10 +370,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.info(
         f"""
-        **🎁 Free Tier:**\n
+        **Free Tier:**\n
         Full backtesting on EUR/USD only.
 
-        **⭐ Upgrade to Premium ($29.99/mo):**\n
+        **Upgrade to Premium ($29.99/mo):**\n
         • Unlock all pairs\n
         • Unlock Strategy Scanner\n
         • Get Live Signal Alerts
@@ -438,7 +389,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.page = "profile"
         st.rerun()
     
-    # === HELPER FUNCTIONS (Alerts & Calendar) ===
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval):
         if "TD_API_KEY" not in st.secrets:
@@ -468,18 +418,15 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- RECTIFIED: display_news_calendar (REAL API + DYNAMIC + RESULTS) ---
+    # === FIXED: display_news_calendar (CORRECT ENDPOINT) ===
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar (Next 7 Days)")
 
-        # Search bar
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
-        # Fetch real data from Twelve Data
-        @st.cache_data(ttl=300)  # 5-minute cache
+        @st.cache_data(ttl=300)
         def get_calendar():
             try:
-                # Get events from yesterday (to see results) and next 7 days
                 today = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
                 end = (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
                 
@@ -487,7 +434,9 @@ elif st.session_state.page == "app" and st.session_state.user:
                     st.error("TD_API_KEY not found for calendar. Please check secrets.")
                     return pd.DataFrame()
                     
-                url = "https://api.twelvedata.com/economic_calendar"
+                # CORRECTED ENDPOINT
+                url = "https://api.twelvedata.com/v1/economic_calendar"
+                
                 params = {
                     "apikey": st.secrets["TD_API_KEY"],
                     "country": "US,GB,EU,AU,CA,NZ,JP,CH", 
@@ -501,11 +450,10 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if data:
                         df = pd.DataFrame(data)
                         df["date_dt"] = pd.to_datetime(df["datetime"])
-                        df["date"] = df["date_dt"].dt.strftime("%A, %b %d") # e.g., Friday, Nov 01
+                        df["date"] = df["date_dt"].dt.strftime("%A, %b %d")
                         df["time"] = df["date_dt"].dt.strftime("%H:%M")
                         df["impact"] = df["impact"].str.capitalize()
                         df = df.rename(columns={"name": "event"})
-                        # Keep the new results columns
                         return df[["date", "time", "event", "impact", "country", "previous", "forecast", "actual", "date_dt"]].dropna(subset=["time"])
                 else:
                     st.error(f"Calendar API error: {r.status_code} - {r.text}")
@@ -524,40 +472,28 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.rerun()
             return
 
-        # Filter
         if search:
             df = df[df["event"].str.contains(search, case=False, na=False)]
 
-        # Impact colors and emojis
         impact_color = {"High": "#FF4136", "Medium": "#FF851B", "Low": "#AAAAAA"}
-        impact_emoji = {"High": "🔴", "Medium": "🟠", "Low": "⚪️"}
+        impact_emoji = {"High": "High", "Medium": "Medium", "Low": "Low"}
 
-        # Legend
         cols = st.columns(3)
         with cols[0]: st.markdown(f"**{impact_emoji['High']} High**")
         with cols[1]: st.markdown(f"**{impact_emoji['Medium']} Medium**")
         with cols[2]: st.markdown(f"**{impact_emoji['Low']} Low**")
         st.markdown("---")
 
-        # Group by date
         for date in sorted(df["date"].unique()):
             st.markdown(f"### {date} (UTC)")
             day_df = df[df["date"] == date].sort_values("time")
-            
             for _, row in day_df.iterrows():
-                # --- This is the new, smarter display logic ---
-                
-                # 1. Main Event Line
                 impact_str = row['impact']
-                styled_impact = f'<span style="color:{impact_color.get(impact_str, "#f0f0f0")}; font-weight:bold;">{impact_emoji.get(impact_str, "⚪️")} {impact_str}</span>'
+                styled_impact = f'<span style="color:{impact_color.get(impact_str, "#f0f0f0")}; font-weight:bold;">{impact_emoji.get(impact_str, "Low")} {impact_str}</span>'
                 st.markdown(f"**{row['time']}** | {row['event']} ({row['country']}) | {styled_impact}", unsafe_allow_html=True)
                 
-                # 2. Results/Forecast Line (in a styled box)
                 results_html = "<div class='results-box'><span class='results-text'>"
-                
-                # Check if the event has passed (has an 'actual' value)
                 if pd.notna(row['actual']):
-                    # Try to convert to numbers for comparison
                     try:
                         actual_val = float(row['actual'])
                         forecast_val = float(row['forecast'])
@@ -568,39 +504,29 @@ elif st.session_state.page == "app" and st.session_state.user:
                         else:
                             actual_class = 'actual-neutral'
                     except:
-                        actual_class = 'actual-neutral' # Can't compare, just show as neutral
-                        
+                        actual_class = 'actual-neutral'
                     results_html += f"**Actual: <span class='{actual_class}'>{row['actual']}</span>** | "
                     results_html += f"Forecast: {row['forecast']} | "
                     results_html += f"Previous: {row['previous']}"
-                
-                # Else, if it's an upcoming event, show forecast
                 elif pd.notna(row['forecast']):
                     results_html += f"**Forecast: {row['forecast']}** | Previous: {row['previous']}"
-                
-                # Else, just show previous if it's all we have
                 elif pd.notna(row['previous']):
                     results_html += f"Previous: {row['previous']}"
-                
-                # If no data at all, don't show the box
                 else:
                     results_html = ""
 
                 if results_html:
                     results_html += "</span></div>"
                     st.markdown(results_html, unsafe_allow_html=True)
+                st.markdown("---")
                 
-                st.markdown("---") # Separator for each event
-                
-        # Refresh button
         if st.button("Refresh Calendar"):
             st.cache_data.clear()
             st.rerun()
 
         st.caption("Data: Twelve Data API • Times in UTC")
-    # --- END OF RECTIFIED FUNCTION ---
+    # === END OF FIXED FUNCTION ===
 
-    # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
@@ -640,7 +566,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         return df
 
-    # === (FIXED) BACKTESTING FUNCTION ===
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
         df = df_in.copy(); trades = []
         if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
@@ -678,7 +603,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
         return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_log, resolved_trades
 
-    # === DATA LOADING & MAIN CHART LOGIC ===
     with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
         df = fetch_data(selected_pair, INTERVALS[selected_interval])
     if df.empty:
@@ -691,7 +615,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     if df.empty:
         st.warning("Waiting for sufficient data after indicator calculation..."); st.stop()
 
-    # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
     if run_backtest_button:
         with st.spinner("Running backtest on real market data..."):
             total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
@@ -704,7 +627,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             }
         st.rerun()
 
-    # === DISPLAY MAIN BACKTESTING IF RESULTS EXIST ===
     if 'backtest_results' in st.session_state:
         results = st.session_state.backtest_results
         st.markdown("---"); st.subheader("Backtesting Results (Simulated)")
@@ -715,13 +637,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         col_p.metric("Total Profit ($)", f"{results['total_profit']:,.2f}", delta=f"{(results['total_profit']/initial_capital):.2%}")
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
         st.subheader("Equity Curve")
-        
-        # FIX: Check for the correct key 'resolved_trades_df'
-        resolved_df_key = 'resolved_trades_df' if 'resolved_trades_df' in results else 'resolved_trades_ _df'
-        
-        if resolved_df_key in results and not results[resolved_df_key].empty:
+        if 'resolved_trades_df' in results and not results['resolved_trades_df'].empty:
             equity_fig = go.Figure()
-            equity_fig.add_trace(go.Scatter(x=results[resolved_df_key]['exit_time'], y=results[resolved_df_key]['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
+            equity_fig.add_trace(go.Scatter(x=results['resolved_trades_df']['exit_time'], y=results['resolved_trades_df']['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
             equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
@@ -731,7 +649,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
-    # === MAIN CHART ===
     st.markdown("---")
     st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df)} Candles")
     chart_type = st.radio("Chart Type", ["Candlestick", "Line"], horizontal=True, label_visibility="collapsed")
@@ -769,24 +686,21 @@ elif st.session_state.page == "app" and st.session_state.user:
     fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
         check_for_live_signal(df, selected_pair)
 
-    # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
-    display_news_calendar() # <-- This now calls the REAL, new function
+    display_news_calendar()
     st.markdown("---")
 
-    # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
-        with st.expander("🚀 Strategy Scanner (Premium Feature)"):
+        with st.expander("Strategy Scanner (Premium Feature)"):
             st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
             col1, col2, col3 = st.columns(3)
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", [ "RSI Standalone", "MACD Crossover"], default=["RSI Standalone", "MACD Crossover"])
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -837,11 +751,10 @@ elif st.session_state.page == "app" and st.session_state.user:
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
     else:
-         st.info("The **🚀 Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
+         st.info("The **Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
 
-    # === RISK DISCLAIMER ===
     st.markdown("---")
-    st.subheader("⚠️ Risk Disclaimer")
+    st.subheader("Risk Disclaimer")
     st.warning(
         """
         This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance. 
@@ -850,13 +763,11 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
-    # === AUTO-REFRESH COMPONENT ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
-# === 6. Error handling for auth/db init failure ===
 elif not st.session_state.user:
-    st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
-    st.title("PipWizard 💹")
+    st.set_page_config(page_title="Error - PipWizard", page_icon="Warning", layout="centered")
+    st.title("PipWizard Chart")
     st.error("Application failed to initialize.")
     st.warning("Could not connect to the authentication service.")
     st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue. Please contact the administrator.")
@@ -867,4 +778,3 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
-
