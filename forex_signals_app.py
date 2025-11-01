@@ -9,7 +9,7 @@ import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
-import requests  # New: For Paystack API
+import requests  # For Paystack API
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -19,16 +19,13 @@ def initialize_firebase():
             st.error("Firebase config not found in Streamlit Secrets.")
             return None, None
         
-        # This reads the [FIREBASE_CONFIG] table from your secrets
         config = st.secrets["FIREBASE_CONFIG"]
         
-        # Add databaseURL if it's missing (pyrebase needs it)
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
                 config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
             else:
-                # Fallback if projectId is somehow missing
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
 
         try:
@@ -107,7 +104,7 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS (UPDATED) ===
+# === 4. PAYSTACK PAYMENT FUNCTIONS ===
 
 def create_payment_link(email, user_id):
     """
@@ -115,23 +112,17 @@ def create_payment_link(email, user_id):
     We use a fixed test amount (e.g., 100 NGN) for this test.
     """
     
-    # We will use NGN 100 for testing. 100 * 100 = 10000 kobo.
-    test_amount_kobo = 10000 
+    test_amount_kobo = 10000 # 100 NGN * 100 kobo
     
-    # UPDATED: Check for the Paystack table and keys
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
     url = "https://api.paystack.co/transaction/initialize"
     headers = {
-        # UPDATED: Read the key from the [PAYSTACK_TEST] table
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
         "Content-Type": "application/json"
     }
-    
-    # IMPORTANT: You must add your app's deployed URL to Streamlit Secrets
-    # e.g., APP_URL = "https://your-app-name.streamlit.app/"
     
     APP_URL = st.secrets.get("APP_URL", "")
     if not APP_URL:
@@ -151,7 +142,7 @@ def create_payment_link(email, user_id):
 
     payload = {
         "email": email,
-        "amount": test_amount_kobo, # NGN 100 for testing
+        "amount": test_amount_kobo, 
         "callback_url": APP_URL, # Redirect back to the main app
         "metadata": {
             "user_id": user_id,
@@ -185,7 +176,6 @@ def verify_payment(reference):
 
     try:
         url = f"https://api.paystack.co/transaction/verify/{reference}"
-        # UPDATED: Read the key from the [PAYSTACK_TEST] table
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
         response = requests.get(url, headers=headers)
@@ -194,7 +184,6 @@ def verify_payment(reference):
         if response_data.get("status") and response_data["data"]["status"] == "success":
             st.success("Payment successful! Your account is now Premium.")
             
-            # Get the user_id from the payment metadata
             metadata = response_data["data"].get("metadata", {})
             user_id = metadata.get("user_id")
             
@@ -205,11 +194,10 @@ def verify_payment(reference):
                 st.balloons()
                 st.session_state.page = "app" # Go back to the main app
                 
-                # Clear query params to avoid re-triggering
                 try:
                     st.query_params.clear()
                 except:
-                    pass # st.query_params.clear() is newer, use fallback
+                    pass 
                 
                 st.rerun()
             else:
@@ -270,7 +258,6 @@ elif st.session_state.page == "profile":
         st.warning("You are on the **Free Tier**.")
         st.markdown(f"Upgrade to **Premium ($29.99/month)** to unlock all pairs, live alerts, and the Strategy Scanner.")
         
-        # The Upgrade Button
         if st.button("Upgrade to Premium Now! (Test Payment: 100 NGN)", type="primary"):
             with st.spinner("Connecting to Paystack..."):
                 user_email = st.session_state.user['email']
@@ -475,22 +462,45 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
+    # --- RECTIFIED: display_news_calendar ---
     def display_news_calendar():
         st.subheader("Forex Economic Calendar (Today & Tomorrow)")
-        today_utc = datetime.utcnow().strftime("%Y-%m-%d")
-        tomorrow_utc = (datetime.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        events = [{"date": today_utc, "time": "13:30", "event": "US Nonfarm Payrolls", "impact": "high"}, {"date": today_utc, "time": "14:00", "event": "US Unemployment Rate", "impact": "high"}, {"date": today_utc, "time": "15:00", "event": "ISM Manufacturing PMI", "impact": "medium"}, {"date": tomorrow_utc, "time": "12:30", "event": "ECB Interest Rate Decision", "impact": "high"}, {"date": tomorrow_utc, "time": "14:00", "event": "US Retail Sales", "impact": "medium"}]
-        today_events = [e for e in events if e["date"] in [today_utc, tomorrow_utc]]
+
+        # Create datetime objects
+        today_obj = datetime.utcnow()
+        tomorrow_obj = today_obj + pd.Timedelta(days=1)
+
+        # Store the objects, not strings
+        events = [
+            {"date": today_obj, "time": "13:30", "event": "US Nonfarm Payrolls", "impact": "high"},
+            {"date": today_obj, "time": "14:00", "event": "US Unemployment Rate", "impact": "high"},
+            {"date": today_obj, "time": "15:00", "event": "ISM Manufacturing PMI", "impact": "medium"},
+            {"date": tomorrow_obj, "time": "12:30", "event": "ECB Interest Rate Decision", "impact": "high"},
+            {"date": tomorrow_obj, "time": "14:00", "event": "US Retail Sales", "impact": "medium"},
+        ]
+
+        # Get string representations for filtering
+        today_date_str = today_obj.strftime("%Y-%m-%d")
+        tomorrow_date_str = tomorrow_obj.strftime("%Y-%m-%d")
+
+        # Filter by comparing the date part of the datetime object
+        today_events = [e for e in events if e["date"].strftime("%Y-%m-%d") in [today_date_str, tomorrow_date_str]]
+
         if today_events:
             is_dark = st.session_state.theme == 'dark'
             table_bg_header, table_color_header, table_color_text, table_border_color = ('#1f1f1f', '#ccc', '#f0f0f0', '#333') if is_dark else ('#e9ecef', '#212529', '#212529', '#dee2e6')
             calendar_html = f"""<style>.calendar-table{{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0;color:{table_color_text};}}.calendar-table th{{background-color:{table_bg_header};color:{table_color_header};padding:10px 8px;text-align:left;font-weight:600;}}.calendar-table td{{padding:8px;border-bottom:1px solid {table_border_color};}}.impact-high{{color:#FF4136;font-weight:bold;}}.impact-medium{{color:#A0522D;font-weight:bold;}}.impact-low{{color:#A9A9A9;font-weight:bold;}}</style><table class="calendar-table"><tr><th>Date</th><th>Time (UTC)</th><th>Event</th><th>Impact</th></tr>"""
+            
             for e in today_events:
                 impact_class = {"high": "impact-high", "medium": "impact-medium", "low": "impact-low"}.get(e["impact"], "impact-low")
-                display_date = datetime.strptime(e['date'], "%Y-%m-%d").strftime("%b %d")
+                # No more strptime! Just format the object directly.
+                display_date = e['date'].strftime("%b %d") 
                 calendar_html += f"""<tr><td>{display_date}</td><td>{e['time']}</td><td>{e['event']}</td><td><span class='{impact_class}'>• {e['impact'].title()}</span></td></tr>"""
+            
             calendar_html += "</table>"; components.html(calendar_html, height=250, scrolling=False)
-        else: st.info("No major events scheduled.")
+        else: 
+            st.info("No major events scheduled.")
+    # --- END RECTIFICATION ---
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
