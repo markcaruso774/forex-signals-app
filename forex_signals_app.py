@@ -7,28 +7,23 @@ from datetime import datetime
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
-import pyrebase  # New import for Firebase
-import json      # New import for Firebase config
+import pyrebase  # For Firebase
+import json      # For Firebase
+import requests  # New: For Paystack API
 
 # === 1. FIREBASE CONFIGURATION ===
-# This function initializes Firebase and returns the auth/db objects
 def initialize_firebase():
-    """
-    Loads Firebase config from Streamlit Secrets and initializes the app.
-    Returns auth and db objects.
-    """
+    """Loads Firebase config from Streamlit Secrets and initializes the app."""
     try:
-        # Check if secrets are loaded
         if "FIREBASE_CONFIG" not in st.secrets:
-            st.error("Firebase config not found in Streamlit Secrets. Please add it.")
+            st.error("Firebase config not found in Streamlit Secrets.")
             return None, None
-
-        # Load the config. st.secrets reads the TOML as a dict.
+        
+        # This reads the [FIREBASE_CONFIG] table from your secrets
         config = st.secrets["FIREBASE_CONFIG"]
         
         # Add databaseURL if it's missing (pyrebase needs it)
         if "databaseURL" not in config:
-            # Check for both projectId and project_id for safety
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
                 config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
@@ -36,116 +31,213 @@ def initialize_firebase():
                 # Fallback if projectId is somehow missing
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
 
-
-        # Initialize Firebase
         try:
             firebase = pyrebase.initialize_app(config)
             auth = firebase.auth()
             db = firebase.database()
             return auth, db
         except Exception as e:
-            # Catch errors during initialization (e.g., config format)
             st.error(f"Error initializing Firebase (check config format): {e}")
             return None, None
             
     except Exception as e:
-        # Catch errors from Streamlit Secrets itself
         st.error(f"Error loading Streamlit Secrets: {e}")
         return None, None
 
-# Initialize Firebase ONCE
 auth, db = initialize_firebase()
 
 # === 2. SESSION STATE MANAGEMENT ===
-# This manages the user's login status across page refreshes
 if 'user' not in st.session_state:
-    st.session_state.user = None # No user logged in yet
+    st.session_state.user = None
 if 'is_premium' not in st.session_state:
-    st.session_state.is_premium = False # Default to free tier
+    st.session_state.is_premium = False
 if 'page' not in st.session_state:
-    st.session_state.page = "login" # Start on the login page
+    st.session_state.page = "login" # Start on 'login'
 
 # === 3. AUTHENTICATION FUNCTIONS ===
 def sign_up(email, password):
-    """Signs up a new user and creates their database entry."""
     if auth is None or db is None:
-        st.error("Authentication service not available. Please contact support.")
+        st.error("Auth service not available. Contact support.")
         return
     try:
         user = auth.create_user_with_email_and_password(email, password)
-        st.session_state.user = user # Log them in
-        
-        # Create a database entry for the new user in Realtime Database
+        st.session_state.user = user
+        # Store user info in Realtime Database
         user_data = {"email": email, "subscription_status": "free"}
         db.child("users").child(user['localId']).set(user_data)
-        
-        st.session_state.is_premium = False # Set their status
-        st.session_state.page = "app" # Go to the main app
+        st.session_state.is_premium = False
+        st.session_state.page = "app"
         st.rerun()
     except Exception as e:
+        error_message = "An unknown error occurred."
         try:
-            # Try to parse the Firebase error message
             error_json = e.args[1]
-            error_message = json.loads(error_json).get('error', {}).get('message', "An unknown error occurred.")
-            st.error(f"Failed to create account: {error_message}")
+            error_message = json.loads(error_json).get('error', {}).get('message', error_message)
         except:
-            # Fallback for non-JSON errors
-            st.error(f"Failed to create account: An unknown error occurred. (Check Firebase setup)")
+            pass # Use the default error message
+        st.error(f"Failed to create account: {error_message}")
 
 def login(email, password):
-    """Logs in an existing user and fetches their subscription status."""
     if auth is None or db is None:
-        st.error("Authentication service not available. Please contact support.")
+        st.error("Auth service not available. Contact support.")
         return
     try:
         user = auth.sign_in_with_email_and_password(email, password)
-        st.session_state.user = user # Log them in
-        
-        # Fetch their subscription status from the database
+        st.session_state.user = user
+        # Fetch user status from Realtime Database
         user_data = db.child("users").child(user['localId']).get().val()
-        
         if user_data and user_data.get("subscription_status") == "premium":
             st.session_state.is_premium = True
         else:
             st.session_state.is_premium = False
-            
-        st.session_state.page = "app" # Go to the main app
+        st.session_state.page = "app"
         st.rerun()
     except Exception as e:
+        error_message = "An unknown error occurred."
         try:
             error_json = e.args[1]
-            error_message = json.loads(error_json).get('error', {}).get('message', "An unknown error occurred.")
-            st.error(f"Login Failed: {error_message}")
+            error_message = json.loads(error_json).get('error', {}).get('message', error_message)
         except:
-            st.error(f"Login Failed: An unknown error occurred. (Check credentials)")
+             pass
+        st.error(f"Login Failed: {error_message}")
 
 def logout():
-    """Logs the user out and resets session state."""
     st.session_state.user = None
     st.session_state.is_premium = False
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. LOGIN/SIGN UP PAGE ===
-# This runs if no user is logged in
+# === 4. PAYSTACK PAYMENT FUNCTIONS (UPDATED) ===
+
+def create_payment_link(email, user_id):
+    """
+    Calls Paystack API to create a one-time payment link.
+    We use a fixed test amount (e.g., 100 NGN) for this test.
+    """
+    
+    # We will use NGN 100 for testing. 100 * 100 = 10000 kobo.
+    test_amount_kobo = 10000 
+    
+    # UPDATED: Check for the Paystack table and keys
+    if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
+        st.error("Paystack secret key not configured in Streamlit Secrets.")
+        return None, None
+
+    url = "https://api.paystack.co/transaction/initialize"
+    headers = {
+        # UPDATED: Read the key from the [PAYSTACK_TEST] table
+        "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
+        "Content-Type": "application/json"
+    }
+    
+    # IMPORTANT: You must add your app's deployed URL to Streamlit Secrets
+    # e.g., APP_URL = "https://your-app-name.streamlit.app/"
+    
+    APP_URL = st.secrets.get("APP_URL", "")
+    if not APP_URL:
+        # Try to get the URL from the server if not in secrets (for dev)
+        try:
+            from streamlit.web.server.server_util import get_server_instance
+            server = get_server_instance()
+            APP_URL = "https://" + server.get_url("") # Construct full URL
+        except Exception as e:
+             st.warning(f"Could not auto-detect URL: {e}. Using blank.")
+             APP_URL = "" # Fallback
+             
+    if not APP_URL:
+        st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
+        st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
+        return None, None
+
+    payload = {
+        "email": email,
+        "amount": test_amount_kobo, # NGN 100 for testing
+        "callback_url": APP_URL, # Redirect back to the main app
+        "metadata": {
+            "user_id": user_id,
+            "user_email": email,
+            "description": "PipWizard Premium Subscription (Test)"
+        }
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response_data = response.json()
+        
+        if response_data.get("status"):
+            auth_url = response_data["data"]["authorization_url"]
+            reference = response_data["data"]["reference"]
+            return auth_url, reference
+        else:
+            st.error(f"Paystack error: {response_data.get('message')}")
+            return None, None
+    except Exception as e:
+        st.error(f"Error creating payment link: {e}")
+        return None, None
+
+def verify_payment(reference):
+    """
+    Calls Paystack to verify a transaction reference.
+    """
+    if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
+        st.error("Services not initialized.")
+        return False
+
+    try:
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        # UPDATED: Read the key from the [PAYSTACK_TEST] table
+        headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
+        
+        response = requests.get(url, headers=headers)
+        response_data = response.json()
+
+        if response_data.get("status") and response_data["data"]["status"] == "success":
+            st.success("Payment successful! Your account is now Premium.")
+            
+            # Get the user_id from the payment metadata
+            metadata = response_data["data"].get("metadata", {})
+            user_id = metadata.get("user_id")
+            
+            if user_id:
+                # Update user's status in Firebase
+                db.child("users").child(user_id).update({"subscription_status": "premium"})
+                st.session_state.is_premium = True
+                st.balloons()
+                st.session_state.page = "app" # Go back to the main app
+                
+                # Clear query params to avoid re-triggering
+                try:
+                    st.query_params.clear()
+                except:
+                    pass # st.query_params.clear() is newer, use fallback
+                
+                st.rerun()
+            else:
+                st.error("Could not find user_id in payment metadata. Please contact support.")
+            return True
+        else:
+            st.error("Payment verification failed. Please try again or contact support.")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error verifying payment: {e}")
+        return False
+
+# === 5. LOGIN/SIGN UP PAGE ===
 if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon="💹", layout="centered")
 
-    # Handle the case where Firebase init failed
     if auth is None or db is None:
         st.title("PipWizard 💹")
         st.error("Application failed to initialize.")
         st.warning("Could not connect to the authentication service.")
-        st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue. Please contact the administrator.")
+        st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue.")
     else:
         st.title(f"Welcome to PipWizard 💹")
         st.text("Please log in or sign up to continue.")
-        
         action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
-        
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
-
         if action == "Sign Up":
             confirm_password = st.text_input("Confirm Password", type="password")
             if st.button("Sign Up"):
@@ -155,7 +247,6 @@ if st.session_state.page == "login":
                     st.error("Passwords do not match.")
                 else:
                     sign_up(email, password)
-        
         if action == "Login":
             if st.button("Login"):
                 if not email or not password:
@@ -163,46 +254,76 @@ if st.session_state.page == "login":
                 else:
                     login(email, password)
 
-# === 5. MAIN APP PAGE ===
-# This runs ONLY if the user is logged in
+# === 6. PROFILE / UPGRADE PAGE ===
+elif st.session_state.page == "profile":
+    st.set_page_config(page_title="Profile - PipWizard", page_icon="💹", layout="centered")
+    
+    st.title(f"Profile & Subscription 💹")
+    
+    if st.session_state.user and 'email' in st.session_state.user:
+        st.write(f"Logged in as: `{st.session_state.user['email']}`")
+    
+    if st.session_state.is_premium:
+        st.success("You are a **Premium User**!")
+        st.write("All features, pairs, and the Strategy Scanner are unlocked.")
+    else:
+        st.warning("You are on the **Free Tier**.")
+        st.markdown(f"Upgrade to **Premium ($29.99/month)** to unlock all pairs, live alerts, and the Strategy Scanner.")
+        
+        # The Upgrade Button
+        if st.button("Upgrade to Premium Now! (Test Payment: 100 NGN)", type="primary"):
+            with st.spinner("Connecting to Paystack..."):
+                user_email = st.session_state.user['email']
+                user_id = st.session_state.user['localId']
+                
+                auth_url, reference = create_payment_link(user_email, user_id) 
+                
+                if auth_url:
+                    st.info("Redirecting you to Paystack to complete your payment...")
+                    st.markdown(f'If you are not redirected, [**Click Here to Pay**]({auth_url})', unsafe_allow_html=True)
+                    components.html(f'<meta http-equiv="refresh" content="0; url={auth_url}">', height=0)
+                else:
+                    st.error("Could not initiate payment. Please try again.")
+
+    st.markdown("---")
+    if st.button("Back to App"):
+        st.session_state.page = "app"
+        st.rerun()
+        
+    if st.button("Logout", type="secondary"):
+        logout()
+
+# === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
-    # --- Config for the main app page ---
     st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
 
+    # --- NEW: Check for Payment Callback ---
+    query_params = st.query_params
+    if "trxref" in query_params:
+        reference = query_params["trxref"]
+        with st.spinner(f"Verifying your payment ({reference})..."):
+            verify_payment(reference)
+    # --- End Payment Check ---
+
     # === CONFIG ===
-    # (We get TD_API_KEY from secrets now)
-    ALL_PAIRS = [
-        "EUR/USD", "GBP/USD", "USD/JPY",
-        "USD/CAD", "AUD/USD", "NZD/USD",
-        "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"
-    ]
+    ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
     FREE_PAIR = "EUR/USD"
     PREMIUM_PAIRS = ALL_PAIRS
-
-    INTERVALS = {
-        "1min": "1min", "5min": "5min", "15min": "15min",
-        "30min": "30min", "1h": "1h"
-    }
+    INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
     OUTPUTSIZE = 500
 
     # === THEME ===
     if 'theme' not in st.session_state:
         st.session_state.theme = "dark"
-
     def toggle_theme():
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        return f"""
-        <style>
+        return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
-            .buy-signal {{ color: #26a69a; }}
-            .sell-signal {{ color: #ef5350; }}
-        </style>
-        """
+            .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
+        </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
-
 
     # === HEADER ===
     col1, col2 = st.columns([6, 1])
@@ -213,72 +334,48 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === NEW: ABOUT THE APP SECTION (with Price) ===
+    # === ABOUT THE APP SECTION ===
     with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
         st.markdown(
             f"""
             ### What is PipWizard?
-
             PipWizard is a powerful decision-support tool for forex traders. It's designed to help you **find**, **test**, and **act on** trading strategies in real-time.
-
             It combines a live signal generator, economic news calendar, and a powerful, on-demand backtesting engine.
 
-            ---
-
             ### How to Use the App
-
-            There is a simple 3-step workflow:
-
             1.  **Step 1: TEST A STRATEGY (The "Main Backtest")**
-                * Use the sidebar to pick a strategy (`RSI Standalone`, `MACD Crossover`, etc.) and set your `Stop Loss` and `Take Profit`.
-                * Click the **"Run Backtest"** button.
-                * The app will instantly show you a full report, including an **Equity Curve** and **Detailed Trade Log**, so you can see if your settings were profitable on historical data.
-
+                * Use the sidebar to pick a strategy (`RSI Standalone`, etc.) and set your `Stop Loss` and `Take Profit`.
+                * Click the **"Run Backtest"** button to see a full report, including an **Equity Curve** and **Trade Log**.
             2.  **Step 2: FIND THE BEST STRATEGY (Premium Feature)**
                 * Open the **"🚀 Strategy Scanner"** at the bottom of the page.
-                * This "heatmap" tool tests *all* strategies across *all* pairs and timeframes at once.
-                * It shows you a color-coded table of what is *actually* working in the market right now.
-
+                * This "heatmap" tool tests all strategies across all pairs and timeframes at once.
             3.  **Step 3: ACTIVATE LIVE SIGNALS (Premium Feature)**
-                * Once you've found a profitable setup (e.g., "RSI Standalone on 1h for EUR/USD"), set those parameters in the sidebar.
-                * The app will now run in "live" mode, automatically refreshing and showing you `BUY` (▲) or `SELL` (▼) signals on the chart as they happen.
-                * Premium users will also receive an "ALERT SENT" in the sidebar for these signals.
-
-            ---
+                * Set your chosen parameters in the sidebar. The app will run in "live" mode, showing signals on the chart as they happen.
+                * Premium users will also receive an "ALERT SENT" in the sidebar.
 
             ### Feature Tiers: Free vs. Premium
-
             **🎁 Free Tier (Your Current Plan):**
-            * ✅ **Economic News Calendar:** See high-impact news events to plan your trades.
-            * ✅ **Full Backtesting Engine:** The main **"Run Backtest"** feature is 100% free.
-            * ✅ **All 6 Strategies:** Test all strategies (RSI, MACD, Confluence, etc.).
-            * ✅ **All Timeframes:** Test your strategies on any timeframe (1min to 1h).
-            * 🔒 **Limited to EUR/USD:** All backtesting and live signals are limited to the **EUR/USD** pair.
+            * ✅ **Economic News Calendar**
+            * ✅ **Full Backtesting Engine**
+            * ✅ **All 6 Strategies** & All Timeframes
+            * 🔒 **Limited to EUR/USD** only.
 
             **⭐ Premium Tier ($29.99/month):**
             Upgrade for **$29.99/month** to unlock every feature:
-            * ✅ **Unlock All 10+ Currency Pairs:** Unlock all pairs (GBP/USD, USD/JPY, etc.) for backtesting and live signals.
-            * ✅ **🚀 Strategy Scanner:** Get full access to the powerful "heatmap" scanner.
-            * ✅ **Live Signal Alerts:** Receive the "ALERT SENT" notifications in your sidebar.
-            * *(Includes all Free Tier features, of course!)*
-
-            *(Payment integration with Paystack coming soon!)*
+            * ✅ **Unlock All 10+ Currency Pairs**
+            * ✅ **🚀 Strategy Scanner**
+            * ✅ **Live Signal Alerts**
             """
         )
-    # === END ABOUT SECTION ===
-
-
+    
     # === SIDEBAR & CONTROLS ===
     st.sidebar.title("PipWizard")
     
-    # Get user email from session state
     user_email = "User"
     if st.session_state.user and 'email' in st.session_state.user:
         user_email = st.session_state.user['email']
-    
     st.sidebar.write(f"Logged in as: `{user_email}`")
     
-    # Check subscription status from session state
     is_premium = st.session_state.is_premium
 
     if is_premium:
@@ -289,30 +386,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.sidebar.warning("Free Tier: EUR/USD Only")
         st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
 
-    # TIMEFRAME SELECTOR
-    selected_interval = st.sidebar.selectbox(
-        "Timeframe",
-        options=list(INTERVALS.keys()),
-        index=3,
-        format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour")
-    )
-
-    # === STRATEGY SELECTION ===
+    selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"))
+    
     st.sidebar.markdown("---")
     st.sidebar.subheader("Strategy Selection")
-    strategy_name = st.sidebar.selectbox(
-        "Choose a Strategy",
-        [
-            "RSI + SMA Crossover",      # Original
-            "MACD Crossover",           # Original
-            "RSI + MACD (Confluence)",  # New
-            "SMA + MACD (Confluence)",  # New
-            "RSI Standalone",           # New
-            "SMA Crossover Standalone"  # New
-        ]
-    )
-
-    # INDICATOR PERIOD CONTROLS
+    strategy_name = st.sidebar.selectbox("Choose a Strategy", ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone"])
+    
     st.sidebar.markdown("---")
     st.sidebar.subheader("Indicator Configuration")
     show_rsi = st.sidebar.checkbox("Show RSI Chart", value=True)
@@ -322,40 +401,29 @@ elif st.session_state.page == "app" and st.session_state.user:
     sma_period = st.sidebar.slider("SMA Period", 10, 50, 20, key='sma_period')
     alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
     alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 65, key='rsi_high')
-    if alert_rsi_low >= alert_rsi_high:
-        st.sidebar.error("RSI Buy threshold must be lower than Sell threshold.")
-        st.stop()
+    if alert_rsi_low >= alert_rsi_high: st.sidebar.error("RSI Buy threshold must be lower than Sell."); st.stop()
     st.sidebar.markdown("**MACD (Confirmation)**")
     macd_fast = st.sidebar.slider("MACD Fast Period", 1, 26, 12, key='macd_fast')
     macd_slow = st.sidebar.slider("MACD Slow Period", 13, 50, 26, key='macd_slow')
     macd_signal = st.sidebar.slider("MACD Signal Period", 1, 15, 9, key='macd_signal')
-    if macd_fast >= macd_slow:
-        st.sidebar.error("MACD Fast Period must be shorter than Slow Period.")
-        st.stop()
-
-    # === BACKTESTING PARAMETERS ===
+    if macd_fast >= macd_slow: st.sidebar.error("MACD Fast Period must be shorter than Slow."); st.stop()
+    
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=300, value=75, key='tp_pips')
-    if sl_pips <= 0 or tp_pips <= 0:
-        st.sidebar.error("SL and TP must be greater than 0 pips.")
-        st.stop()
-
-    # --- Backtest Buttons (Available to ALL users) ---
+    if sl_pips <= 0 or tp_pips <= 0: st.sidebar.error("SL and TP must be greater than 0."); st.stop()
+    
     st.sidebar.markdown("---")
     col1, col2 = st.sidebar.columns(2)
     run_backtest_button = col1.button("Run Backtest", type="primary", use_container_width=True)
     if 'backtest_results' in st.session_state:
         if col2.button("Clear Results", use_container_width=True):
-            del st.session_state.backtest_results
-            st.rerun()
+            del st.session_state.backtest_results; st.rerun()
     
-    # --- UPGRADE & LOGOUT ---
     st.sidebar.markdown("---")
-    # This info box now shows the price
     st.sidebar.info(
         f"""
         **🎁 Free Tier:**\n
@@ -367,45 +435,31 @@ elif st.session_state.page == "app" and st.session_state.user:
         • Get Live Signal Alerts
         """
     )
-    # Add a (non-functional) Upgrade button
     if not is_premium:
-        # We will link this to Paystack later
-        st.sidebar.button("Upgrade to Premium Now!", type="primary", use_container_width=True, key="upgrade_button")
+        if st.sidebar.button("Upgrade to Premium Now!", type="primary", use_container_width=True, key="upgrade_button"):
+            st.session_state.page = "profile"
+            st.rerun()
 
-    # Logout Button
     st.sidebar.markdown("---")
-    if st.sidebar.button("Logout", use_container_width=True):
-        logout()
-    # --- End of Sidebar ---
-
-
+    if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button"):
+        st.session_state.page = "profile"
+        st.rerun()
+    
     # === HELPER FUNCTIONS (Alerts & Calendar) ===
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval):
-        """Fetches real market data from Twelve Data."""
-        # Check if TD_API_KEY is in secrets
         if "TD_API_KEY" not in st.secrets:
-            st.error("TD_API_KEY not found in Streamlit Secrets.")
-            return pd.DataFrame()
-            
-        td = TDClient(apikey=st.secrets["TD_API_KEY"]) # <-- USES SECRETS
+            st.error("TD_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
+        td = TDClient(apikey=st.secrets["TD_API_KEY"])
         try:
-            ts = td.time_series(
-                symbol=symbol,
-                interval=interval,
-                outputsize=OUTPUTSIZE
-            ).as_pandas()
+            ts = td.time_series(symbol=symbol, interval=interval, outputsize=OUTPUTSIZE).as_pandas()
             if ts is None or ts.empty:
-                st.error(f"No data returned for {symbol}. Check API key or symbol.")
-                return pd.DataFrame()
+                st.error(f"No data returned for {symbol}."); return pd.DataFrame()
             df = ts[['open', 'high', 'low', 'close']].copy()
             df.index = pd.to_datetime(df.index)
-            return df.iloc[::-1]  # Reverse to chronological order (oldest first)
+            return df.iloc[::-1]
         except Exception as e:
-            st.error(f"API Error fetching {symbol}: {e}")
-            if "API key" in str(e):
-                 st.error("Please ensure your Twelve Data API key is correct in Streamlit Secrets.")
-            return pd.DataFrame()
+            st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
 
     def send_alert_email(signal_type, price, pair):
         st.sidebar.markdown(f"**ALERT SENT**")
@@ -413,40 +467,30 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     def check_for_live_signal(df, pair):
         if len(df) < 2: return
-        latest_bar = df.iloc[-2] # Signal bar
-        current_bar = df.iloc[-1] # Action bar
-        signal = latest_bar['signal']
-        price = current_bar['open'] # Alert at entry price
-        if 'last_alert_time' not in st.session_state:
-            st.session_state.last_alert_time = None
+        latest_bar, current_bar = df.iloc[-2], df.iloc[-1]
+        signal, price = latest_bar['signal'], current_bar['open']
+        if 'last_alert_time' not in st.session_state: st.session_state.last_alert_time = None
         if signal != 0 and latest_bar.name != st.session_state.last_alert_time:
             st.session_state.last_alert_time = latest_bar.name
-            if signal == 1:
-                send_alert_email("BUY", price, pair)
-            elif signal == -1:
-                send_alert_email("SELL", price, pair)
+            if signal == 1: send_alert_email("BUY", price, pair)
+            elif signal == -1: send_alert_email("SELL", price, pair)
 
     def display_news_calendar():
         st.subheader("Forex Economic Calendar (Today & Tomorrow)")
-        today_utc = datetime.utcnow().strftime("%Y-m-%d")
+        today_utc = datetime.utcnow().strftime("%Y-%m-%d")
         tomorrow_utc = (datetime.utcnow() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         events = [{"date": today_utc, "time": "13:30", "event": "US Nonfarm Payrolls", "impact": "high"}, {"date": today_utc, "time": "14:00", "event": "US Unemployment Rate", "impact": "high"}, {"date": today_utc, "time": "15:00", "event": "ISM Manufacturing PMI", "impact": "medium"}, {"date": tomorrow_utc, "time": "12:30", "event": "ECB Interest Rate Decision", "impact": "high"}, {"date": tomorrow_utc, "time": "14:00", "event": "US Retail Sales", "impact": "medium"}]
         today_events = [e for e in events if e["date"] in [today_utc, tomorrow_utc]]
         if today_events:
             is_dark = st.session_state.theme == 'dark'
-            table_bg_header = '#1f1f1f' if is_dark else '#e9ecef'
-            table_color_header = '#ccc' if is_dark else '#212529'
-            table_color_text = '#f0f0f0' if is_dark else '#212529'
-            table_border_color = '#333' if is_dark else '#dee2e6'
+            table_bg_header, table_color_header, table_color_text, table_border_color = ('#1f1f1f', '#ccc', '#f0f0f0', '#333') if is_dark else ('#e9ecef', '#212529', '#212529', '#dee2e6')
             calendar_html = f"""<style>.calendar-table{{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0;color:{table_color_text};}}.calendar-table th{{background-color:{table_bg_header};color:{table_color_header};padding:10px 8px;text-align:left;font-weight:600;}}.calendar-table td{{padding:8px;border-bottom:1px solid {table_border_color};}}.impact-high{{color:#FF4136;font-weight:bold;}}.impact-medium{{color:#A0522D;font-weight:bold;}}.impact-low{{color:#A9A9A9;font-weight:bold;}}</style><table class="calendar-table"><tr><th>Date</th><th>Time (UTC)</th><th>Event</th><th>Impact</th></tr>"""
             for e in today_events:
                 impact_class = {"high": "impact-high", "medium": "impact-medium", "low": "impact-low"}.get(e["impact"], "impact-low")
                 display_date = datetime.strptime(e['date'], "%Y-%m-%d").strftime("%b %d")
                 calendar_html += f"""<tr><td>{display_date}</td><td>{e['time']}</td><td>{e['event']}</td><td><span class='{impact_class}'>• {e['impact'].title()}</span></td></tr>"""
-            calendar_html += "</table>"
-            components.html(calendar_html, height=250, scrolling=False)
-        else:
-            st.info("No major events scheduled.")
+            calendar_html += "</table>"; components.html(calendar_html, height=250, scrolling=False)
+        else: st.info("No major events scheduled.")
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
@@ -463,8 +507,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         elif strategy_name == "MACD Crossover":
             buy_cond = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
             sell_cond = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
-            df.loc[buy_cond, 'signal'] = 1
-            df.loc[sell_cond, 'signal'] = -1
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         elif strategy_name == "RSI + MACD (Confluence)":
             buy_cond_1 = (df['rsi'] < rsi_l)
             buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
@@ -482,59 +525,46 @@ elif st.session_state.page == "app" and st.session_state.user:
         elif strategy_name == "RSI Standalone":
             buy_cond = (df['rsi'] < rsi_l) & (df['rsi'].shift(1) >= rsi_l)
             sell_cond = (df['rsi'] > rsi_h) & (df['rsi'].shift(1) <= rsi_h)
-            df.loc[buy_cond, 'signal'] = 1
-            df.loc[sell_cond, 'signal'] = -1
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         elif strategy_name == "SMA Crossover Standalone":
             buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
             sell_cond = (df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1))
-            df.loc[buy_cond, 'signal'] = 1
-            df.loc[sell_cond, 'signal'] = -1
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         return df
 
     # === (FIXED) BACKTESTING FUNCTION ===
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
-        df = df_in.copy()
-        trades = []
+        df = df_in.copy(); trades = []
         if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
         else: PIP_MULTIPLIER = 0.0001
-        RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER
-        REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
-        MAX_RISK_USD = initial_capital * risk_per_trade
-        REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
+        RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER; REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
+        MAX_RISK_USD = initial_capital * risk_per_trade; REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
         signal_bars = df[df['signal'] != 0]
         for i in range(len(signal_bars)):
-            signal_row = signal_bars.iloc[i]
-            signal_type = signal_row['signal']
+            signal_row, signal_type = signal_bars.iloc[i], signal_bars.iloc[i]['signal']
             try: signal_index = df.index.get_loc(signal_row.name)
             except KeyError: continue
             if signal_index + 1 >= len(df): continue
-            entry_bar = df.iloc[signal_index + 1]
-            entry_price = entry_bar['open']
-            entry_time = entry_bar.name
-            stop_loss, take_profit = 0.0, 0.0
-            if signal_type == 1: stop_loss = entry_price - RISK_PIPS_VALUE; take_profit = entry_price + REWARD_PIPS_VALUE
-            else: stop_loss = entry_price + RISK_PIPS_VALUE; take_profit = entry_price - REWARD_PIPS_VALUE
-            result = 'OPEN'; profit_loss = 0.0; exit_time = None
+            entry_bar, entry_price, entry_time = df.iloc[signal_index + 1], df.iloc[signal_index + 1]['open'], df.iloc[signal_index + 1].name
+            stop_loss, take_profit = (entry_price - RISK_PIPS_VALUE, entry_price + REWARD_PIPS_VALUE) if signal_type == 1 else (entry_price + RISK_PIPS_VALUE, entry_price - REWARD_PIPS_VALUE)
+            result, profit_loss, exit_time = 'OPEN', 0.0, None
             for j in range(signal_index + 2, len(df)):
                 future_bar = df.iloc[j]
                 if signal_type == 1:
-                    if future_bar['low'] <= stop_loss: result = 'LOSS'; profit_loss = -MAX_RISK_USD; exit_time = future_bar.name; break
-                    elif future_bar['high'] >= take_profit: result = 'WIN'; profit_loss = REWARD_USD; exit_time = future_bar.name; break
+                    if future_bar['low'] <= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
+                    elif future_bar['high'] >= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
                 elif signal_type == -1:
-                    if future_bar['high'] >= stop_loss: result = 'LOSS'; profit_loss = -MAX_RISK_USD; exit_time = future_bar.name; break
-                    elif future_bar['low'] <= take_profit: result = 'WIN'; profit_loss = REWARD_USD; exit_time = future_bar.name; break
-            if result == 'OPEN': result = 'UNRESOLVED'; profit_loss = 0.0; exit_time = df.iloc[-1].name
+                    if future_bar['high'] >= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
+                    elif future_bar['low'] <= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+            if result == 'OPEN': result, profit_loss, exit_time = 'UNRESOLVED', 0.0, df.iloc[-1].name
             trades.append({"entry_time": entry_time, "exit_time": exit_time, "signal": "BUY" if signal_type == 1 else "SELL", "entry_price": entry_price, "stop_loss": stop_loss, "take_profit": take_profit, "result": result, "profit_loss": profit_loss})
         if not trades: return 0, 0, 0, 0, initial_capital, pd.DataFrame(), pd.DataFrame() 
         trade_log = pd.DataFrame(trades).set_index('entry_time')
         resolved_trades = trade_log[trade_log['result'].isin(['WIN', 'LOSS'])].copy()
         if resolved_trades.empty: return 0, 0, 0, 0, initial_capital, trade_log, resolved_trades
-        total_trades = len(resolved_trades)
-        winning_trades = len(resolved_trades[resolved_trades['result'] == 'WIN'])
-        total_profit = resolved_trades['profit_loss'].sum()
-        win_rate = winning_trades / total_trades
-        gross_win = resolved_trades[resolved_trades['profit_loss'] > 0]['profit_loss'].sum()
-        gross_loss = abs(resolved_trades[resolved_trades['profit_loss'] < 0]['profit_loss'].sum())
+        total_trades, winning_trades = len(resolved_trades), len(resolved_trades[resolved_trades['result'] == 'WIN'])
+        total_profit, win_rate = resolved_trades['profit_loss'].sum(), winning_trades / total_trades
+        gross_win, gross_loss = resolved_trades[resolved_trades['profit_loss'] > 0]['profit_loss'].sum(), abs(resolved_trades[resolved_trades['profit_loss'] < 0]['profit_loss'].sum())
         profit_factor = gross_win / gross_loss if gross_loss > 0 else 999.0
         final_capital = initial_capital + total_profit
         resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
@@ -544,16 +574,14 @@ elif st.session_state.page == "app" and st.session_state.user:
     with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
         df = fetch_data(selected_pair, INTERVALS[selected_interval])
     if df.empty:
-        st.error("Failed to load data. The API might be down or your key is invalid.")
-        st.stop()
+        st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
     with st.spinner("Calculating indicators..."):
         df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
     with st.spinner(f"Applying Strategy: {strategy_name}..."):
         df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high)
     df = df.dropna()
     if df.empty:
-        st.warning("Waiting for sufficient data after indicator calculation...")
-        st.stop()
+        st.warning("Waiting for sufficient data after indicator calculation..."); st.stop()
 
     # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
     if run_backtest_button:
@@ -571,8 +599,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     # === DISPLAY MAIN BACKTESTING IF RESULTS EXIST ===
     if 'backtest_results' in st.session_state:
         results = st.session_state.backtest_results
-        st.markdown("---")
-        st.subheader("Backtesting Results (Simulated)")
+        st.markdown("---"); st.subheader("Backtesting Results (Simulated)")
         st.markdown(f"***Data Tested:*** *{results['pair']}* on *{results['interval']}* interval. *{results['data_len']}* bars.")
         col_t, col_w, col_p, col_f = st.columns(4)
         col_t.metric("Total Trades", results['total_trades'])
@@ -585,8 +612,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             equity_fig.add_trace(go.Scatter(x=results['resolved_trades_df']['exit_time'], y=results['resolved_trades_df']['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
             equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
             st.plotly_chart(equity_fig, use_container_width=True)
-        else:
-            st.info("No resolved trades found with these settings.")
+        else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
         st.dataframe(results['trade_df'], use_container_width=True)
     elif not 'backtest_results' in st.session_state:
@@ -604,7 +630,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     if show_rsi: rsi_row = current_row; current_row += 1
     if show_macd: macd_row = current_row
     fig = make_subplots(rows=num_rows, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
-    buy_signals = df[df['signal'] == 1]; sell_signals = df[df['signal'] == -1]
+    buy_signals, sell_signals = df[df['signal'] == 1], df[df['signal'] == -1]
     theme_colors = {"dark": {"increase": "#26a69a", "decrease": "#ef5350", "line": "#2196f3"}, "light": {"increase": "#28a745", "decrease": "#dc3545", "line": "#0d6efd"}}
     current_theme = "dark" if st.session_state.theme == "dark" else "light"
     if chart_type == "Candlestick":
@@ -632,7 +658,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
-    if is_premium: # Only check for alerts if premium
+    if is_premium:
         check_for_live_signal(df, selected_pair)
 
     # --- NEWS CALENDAR SECTION ---
@@ -663,9 +689,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                             interval_val = INTERVALS[interval_key]
                             data = fetch_data(pair, interval_val)
                             if data.empty:
-                                st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping.")
-                                total_jobs -= len(scan_strategies)
-                                continue
+                                st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping."); total_jobs -= len(scan_strategies); continue
                             for strategy in scan_strategies:
                                 job_count += 1
                                 progress_bar.progress(job_count / total_jobs, text=f"Testing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})")
@@ -673,7 +697,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                                 data_with_signal = apply_strategy(data_with_indicators, strategy, scan_params["rsi_l"], scan_params["rsi_h"])
                                 data_with_signal = data_with_signal.dropna()
                                 if data_with_signal.empty: continue
-                                
                                 total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
                                     data_with_signal, pair, scan_params["capital"], scan_params["risk"],
                                     scan_params["sl"], scan_params["tp"]
@@ -684,15 +707,13 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if scan_results:
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
                         def style_profit(val):
-                            color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0f0'
-                            return f'color: {color}; font-weight: bold;'
+                            color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0f0'; return f'color: {color}; font-weight: bold;'
                         def style_win_rate(val):
-                            val = max(0, min(100, val)) # Ensure val is between 0 and 100
-                            if val < 50: return f'background-color: rgba(239, 83, 80, {1 - (val/50)}); color: white;'
-                            else: return f'background-color: rgba(38, 166, 154, {(val-50)/50}); color: white;'
+                            val = max(0, min(100, val)); color = 'white'
+                            if val < 50: return f'background-color: rgba(239, 83, 80, {1 - (val/50)}); color: {color};'
+                            else: return f'background-color: rgba(38, 166, 154, {(val-50)/50}); color: {color};'
                         def style_profit_factor(val):
-                            color = '#26a69a' if val >= 1.0 else '#ef5350'
-                            return f'color: {color}; font-weight: bold;'
+                            color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
                         st.dataframe(
                             results_df.style
                                 .applymap(style_profit, subset=['Total Profit ($)'])
@@ -704,8 +725,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
     else:
-         st.info("The **🚀 Strategy Scanner** is a Premium feature. [Upgrade Now](#)!")
-
+         st.info("The **🚀 Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
 
     # === RISK DISCLAIMER ===
     st.markdown("---")
@@ -722,13 +742,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
 # === 6. Error handling for auth/db init failure ===
-# This is the fallback if Streamlit Secrets are missing or Firebase fails
 elif not st.session_state.user:
     st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
-    st_title = st.title("PipWizard 💹")
-    st_error = st.error("Application failed to initialize.")
-    st_warning = st.warning("Could not connect to the authentication service.")
-    st_info = st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue. Please contact the administrator.")
+    st.title("PipWizard 💹")
+    st.error("Application failed to initialize.")
+    st.warning("Could not connect to the authentication service.")
+    st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue. Please contact the administrator.")
     st.code(f"""
     Error Details:
     Auth object: {'Initialized' if auth else 'Failed'}
