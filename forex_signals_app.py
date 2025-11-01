@@ -480,7 +480,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         def get_free_calendar():
             try:
                 # This is the free RSS feed URL from Investing.com
-                url = "https.cdn.investing.com/economic-calendar/rss.ashx"
+                url = "https://cdn.investing.com/economic-calendar/rss.ashx"
                 feed = feedparser.parse(url)
                 events = []
                 
