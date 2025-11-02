@@ -103,7 +103,6 @@ def logout():
     st.rerun()
 
 # === 4. PAYSTACK PAYMENT FUNCTIONS (TYPO FIXED) ===
-
 def create_payment_link(email, user_id):
     """
     Calls Paystack API to create a one-time payment link.
@@ -114,7 +113,7 @@ def create_payment_link(email, user_id):
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
-
+        
     url = "https://api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
@@ -127,7 +126,6 @@ def create_payment_link(email, user_id):
         return None, None
         
     APP_URL = st.secrets["APP_URL"]
-
     payload = {
         "email": email,
         "amount": test_amount_kobo, 
@@ -161,7 +159,7 @@ def verify_payment(reference):
     if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Services not initialized.")
         return False
-
+        
     try:
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
@@ -202,7 +200,6 @@ def verify_payment(reference):
 # === 5. LOGIN/SIGN UP PAGE ===
 if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon="💹", layout="centered")
-
     if auth is None or db is None:
         st.title("PipWizard 💹")
         st.error("Application failed to initialize.")
@@ -271,7 +268,6 @@ elif st.session_state.page == "profile":
 # === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
     st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
-
     # --- NEW: Check for Payment Callback ---
     query_params = st.query_params
     if "trxref" in query_params:
@@ -279,7 +275,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         with st.spinner(f"Verifying your payment ({reference})..."):
             verify_payment(reference)
     # --- End Payment Check ---
-
+    
     # === CONFIG ===
     ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
     FREE_PAIR = "EUR/USD"
@@ -314,7 +310,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             .actual-neutral {{ color: {'#f0f0f0' if dark else '#212529'}; font-weight: bold; }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
-
+    
     # === HEADER ===
     col1, col2 = st.columns([6, 1])
     with col1:
@@ -331,7 +327,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             ### What is PipWizard?
             PipWizard is a powerful decision-support tool for forex traders. It's designed to help you **find**, **test**, and **act on** trading strategies in real-time.
             It combines a live signal generator, economic news calendar, and a powerful, on-demand backtesting engine.
-
             ### How to Use the App
             1.  **Step 1: TEST A STRATEGY (The "Main Backtest")**
                 * Use the sidebar to pick a strategy (`RSI Standalone`, etc.) and set your `Stop Loss` and `Take Profit`.
@@ -342,14 +337,12 @@ elif st.session_state.page == "app" and st.session_state.user:
             3.  **Step 3: ACTIVATE LIVE SIGNALS (Premium Feature)**
                 * Set your chosen parameters in the sidebar. The app will run in "live" mode, showing signals on the chart as they happen.
                 * Premium users will also receive an "ALERT SENT" in the sidebar.
-
             ### Feature Tiers: Free vs. Premium
             **🎁 Free Tier (Your Current Plan):**
             * ✅ **Economic News Calendar** (Real-time data from Investing.com)
             * ✅ **Full Backtesting Engine**
             * ✅ **All 6 Strategies** & All Timeframes
             * 🔒 **Limited to EUR/USD** only.
-
             **⭐ Premium Tier ($29.99/month):**
             Upgrade for **$29.99/month** to unlock every feature:
             * ✅ **Unlock All 10+ Currency Pairs**
@@ -368,7 +361,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.write(f"Logged in as: `{user_email}`")
     
     is_premium = st.session_state.is_premium
-
     if is_premium:
         selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0)
         st.sidebar.success("Premium Active – All Features Unlocked")
@@ -376,7 +368,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         selected_pair = FREE_PAIR
         st.sidebar.warning("Free Tier: EUR/USD Only")
         st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
-
+    
     selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"))
     
     st.sidebar.markdown("---")
@@ -421,7 +413,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         f"""
         **🎁 Free Tier:**\n
         Full backtesting on EUR/USD only.
-
         **⭐ Upgrade to Premium ($29.99/mo):**\n
         • Unlock all pairs\n
         • Unlock Strategy Scanner\n
@@ -457,7 +448,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     def send_alert_email(signal_type, price, pair):
         st.sidebar.markdown(f"**ALERT SENT**")
         st.sidebar.warning(f"**{signal_type.upper()}** on {pair} at {price:.5f}")
-
+    
     def check_for_live_signal(df, pair):
         if len(df) < 2: return
         latest_bar, current_bar = df.iloc[-2], df.iloc[-1]
@@ -468,72 +459,101 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- CALENDAR FUNCTION (WITH DEBUG PRINTING) ---
+    # --- CALENDAR FUNCTION (WITH NEW FAILOVER LOGIC) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
         @st.cache_data(ttl=300)
         def get_free_calendar():
-            try:
- # ✅ Try EconoPy first (most reliable)
-    
-    url = "https://econopy.io/api/calendar?days=30"
-    response = requests.get(url, timeout=10)
-    data = response.json()
-    if not data or len(data) < 3:
-        raise Exception("EconoPy returned empty data")
-
-# ✅ Fallback: TradingEconomics guest API (always online)
-except Exception as e:
-    print(f"EconoPy failed: {e}")
-    url = "https://api.tradingeconomics.com/calendar?c=guest:guest"
-    response = requests.get(url, timeout=10)
-    data = response.json()
+            try: # Outer try/except to catch all parsing errors
                 
+                # --- START: New data fetching logic with failover ---
+                try:
+                    # ✅ Try EconoPy first (most reliable)
+                    url = "https://econopy.io/api/calendar?days=30"
+                    response = requests.get(url, timeout=10)
+                    response.raise_for_status() 
+                    data = response.json()
+                    source = "econopy" # Set flag
+                    if not data or len(data) < 3:
+                         raise Exception("EconoPy returned empty data")
+                    print("Using EconoPy for calendar") # Debug line
+
+                # ✅ Fallback: TradingEconomics guest API (always online)
+                except Exception as e:
+                    print(f"EconoPy failed: {e}. Falling back to TradingEconomics.")
+                    url = "https://api.tradingeconomics.com/calendar?c=guest:guest"
+                    response = requests.get(url, timeout=10)
+                    response.raise_for_status()
+                    data = response.json()
+                    source = "tradingeconomics" # Set flag
+                    print("Using TradingEconomics for calendar") # Debug line
+                # --- END: New data fetching logic ---
+
                 events = []
-                # --- FIX: Replaced datetime.utcnow() ---
                 now = datetime.now(timezone.utc)
-                
+
                 for e in data:
-                    # Handle potential missing time, default to 00:00
-                    event_time_str = e.get("time", "00:00:00")
-                    if not event_time_str: event_time_str = "00:00:00"
-                    
-                    # --- FIX: Ensure date string is not None ---
-                    date_str = e.get("date")
-                    if not date_str:
-                        continue # Skip event if date is missing
+                    # --- This is the new, conditional parsing logic ---
+                    if source == "econopy":
+                        # EconoPy parsing logic (Guessing keys based on common formats)
+                        event_time_str = e.get("date") 
+                        if not event_time_str: continue
+                        
+                        event_time = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
+                        
+                        event_name = e.get("event", "Unknown Event")
+                        country = e.get("country", "??")
+                        impact_str = e.get("impact", "Low")
+                        forecast = e.get("forecast", "N/A")
+                        previous = e.get("previous", "N/A")
+                        actual = e.get("actual", "N/A")
 
-                    event_time = datetime.strptime(date_str + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
-                    
-                    # --- FIX: Make event_time timezone-aware for comparison ---
-                    event_time = event_time.replace(tzinfo=timezone.utc)
+                    elif source == "tradingeconomics":
+                        # TradingEconomics parsing logic
+                        event_time_str = e.get("Date")
+                        if not event_time_str: continue
 
+                        event_time = datetime.fromisoformat(event_time_str).replace(tzinfo=timezone.utc) # Add UTC
+                        
+                        event_name = e.get("Event", "Unknown Event")
+                        country = e.get("Country", "??")
+                        
+                        # Convert TE impact
+                        impact_num = e.get("Importance", 1)
+                        if impact_num == 3: impact_str = "High"
+                        elif impact_num == 2: impact_str = "Medium"
+                        else: impact_str = "Low"
+                        
+                        forecast = e.get("Forecast", "N/A")
+                        previous = e.get("Previous", "N/A")
+                        actual = e.get("Actual", "N/A")
+                    # --- End of conditional parsing ---
+
+                    # --- Common logic (from old function) ---
                     if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
-                        continue
-                    
-                    actual = e.get("actual", "N/A")
-                    forecast = e.get("forecast", "N/A")
-                    previous = e.get("previous", "N/A")
+                         continue # Filter for the next 7 days
+
                     is_past = event_time < now
                     actual_display = actual if is_past and actual != "N/A" else "Pending"
                     
-                    # Surprise logic
                     surprise = ""
                     if is_past and actual != "N/A" and forecast != "N/A":
                         try:
+                            # Robust number parser
                             def to_num(v):
-                                v = str(v).strip().replace(',', '').replace('%', '')
+                                v = str(v).strip().replace(',', '').replace('%', '').replace('$', '')
                                 if v.endswith('K'): return float(v[:-1]) * 1000
                                 if v.endswith('M'): return float(v[:-1]) * 1000000
-                                if v == "" or v == "N/A": return float('nan') # Handle empty strings
+                                if v.endswith('B'): return float(v[:-1]) * 1000000000
+                                if v == "" or v == "N/A": return float('nan')
                                 return float(v)
                             
                             a, f = to_num(actual), to_num(forecast)
                             
                             if pd.isna(a) or pd.isna(f):
-                                surprise = "" # Can't compare if one is not a number
+                                surprise = ""
                             elif a > f: 
                                 surprise = "Better than Expected"
                             elif a < f: 
@@ -546,9 +566,9 @@ except Exception as e:
                     events.append({
                         "date": event_time.strftime("%A, %b %d"),
                         "time": event_time.strftime("%H:%M"),
-                        "event": e.get("title", "Unknown Event"),
-                        "country": e.get("country", "??"),
-                        "impact": e.get("impact", "Low").title(),
+                        "event": event_name,
+                        "country": country,
+                        "impact": impact_str.title(),
                         "forecast": forecast,
                         "previous": previous,
                         "actual": actual_display,
@@ -558,34 +578,32 @@ except Exception as e:
                 
                 df = pd.DataFrame(events)
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
-            
+
             except Exception as e:
-                # --- THIS IS THE CRITICAL LINE ---
-                print(f"Error in get_free_calendar: {e}") 
-                # ---
-                # Fallback
+                # This is the FINAL fallback if both APIs fail or parsing fails
+                print(f"Error in get_free_calendar (outer): {e}") 
                 return pd.DataFrame([
                     {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
                      "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
                 ])
         # --- END OF REPLACED INNER FUNCTION ---
-
+        
         with st.spinner("Loading live economic calendar..."):
             df = get_free_calendar()
-
+        
         if df.empty:
             st.info("No events loaded.")
             if st.button("Refresh Calendar"):
                 st.cache_data.clear()
                 st.rerun()
             return
-
+            
         if search:
             df = df[df["event"].str.contains(search, case=False, na=False)]
             if df.empty:
                 st.info(f"No events matching '{search}'.")
                 return
-
+                
         st.markdown("""
         <style>
         .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
@@ -600,7 +618,7 @@ except Exception as e:
         .actual-expected { background: #fff8e1; color: #ff8f00; font-weight: bold; }
         </style>
         """, unsafe_allow_html=True)
-
+        
         def style_row(row):
             styles = [""] * len(row)
             impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
@@ -619,18 +637,18 @@ except Exception as e:
             elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
             
             return styles
-
+            
         styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
         
         st.markdown(styled.to_html(), unsafe_allow_html=True)
-
+        
         if st.button("Refresh Calendar"):
             st.cache_data.clear()
             st.rerun()
-
-        st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
+            
+        st.caption("Source: Live API (EconoPy / TradingEconomics) • Live Actuals • Times in UTC")
     # --- END OF CALENDAR FUNCTION ---
-
+    
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
@@ -761,7 +779,7 @@ except Exception as e:
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
-
+    
     # === MAIN CHART ===
     st.markdown("---")
     st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df)} Candles")
@@ -802,16 +820,16 @@ except Exception as e:
     fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-
+    
     # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
         check_for_live_signal(df, selected_pair)
-
+        
     # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
     display_news_calendar() # <-- This now calls the NEW, upgraded function
     st.markdown("---")
-
+    
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
@@ -891,12 +909,12 @@ except Exception as e:
     st.subheader("⚠️ Risk Disclaimer")
     st.warning(
         """
-        This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance. 
-        Forex trading is extremely risky and can result in the loss of your entire capital. 
+        This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance.
+        Forex trading is extremely risky and can result in the loss of your entire capital.
         Always trade responsibly and stick to your risk management plan.
         """
     )
-
+    
     # === AUTO-REFRESH COMPONENT ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
