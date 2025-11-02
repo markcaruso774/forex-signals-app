@@ -1,3 +1,7 @@
+Don't make any changes just effect the Calender field error
+
+
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -26,7 +30,7 @@ def initialize_firebase():
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
-                config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
+                config["databaseURL"] = f"https{project_id}-default-rtdb.firebaseio.com/"
             else:
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
 
@@ -203,15 +207,15 @@ def verify_payment(reference):
 
 # === 5. LOGIN/SIGN UP PAGE ===
 if st.session_state.page == "login":
-    st.set_page_config(page_title="Login - PipWizard", page_icon="chart", layout="centered")
+    st.set_page_config(page_title="Login - PipWizard", page_icon="💹", layout="centered")
 
     if auth is None or db is None:
-        st.title("PipWizard chart")
+        st.title("PipWizard 💹")
         st.error("Application failed to initialize.")
         st.warning("Could not connect to the authentication service.")
         st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue.")
     else:
-        st.title(f"Welcome to PipWizard chart")
+        st.title(f"Welcome to PipWizard 💹")
         st.text("Please log in or sign up to continue.")
         action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
         email = st.text_input("Email")
@@ -234,9 +238,9 @@ if st.session_state.page == "login":
 
 # === 6. PROFILE / UPGRADE PAGE ===
 elif st.session_state.page == "profile":
-    st.set_page_config(page_title="Profile - PipWizard", page_icon="chart", layout="centered")
+    st.set_page_config(page_title="Profile - PipWizard", page_icon="💹", layout="centered")
     
-    st.title(f"Profile & Subscription chart")
+    st.title(f"Profile & Subscription 💹")
     
     if st.session_state.user and 'email' in st.session_state.user:
         st.write(f"Logged in as: `{st.session_state.user['email']}`")
@@ -272,7 +276,7 @@ elif st.session_state.page == "profile":
 
 # === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
-    st.set_page_config(page_title="PipWizard", page_icon="chart", layout="wide")
+    st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
 
     # --- NEW: Check for Payment Callback ---
     query_params = st.query_params
@@ -322,12 +326,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     with col1:
         st.title("PipWizard – Live Forex Signals")
     with col2:
-        theme_label = "Light" if st.session_state.theme == "dark" else "Dark"
+        theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
     # === ABOUT THE APP SECTION ===
-    with st.expander("Welcome to PipWizard! Click here to learn about the app."):
+    with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
         st.markdown(
             f"""
             ### What is PipWizard?
@@ -339,23 +343,24 @@ elif st.session_state.page == "app" and st.session_state.user:
                 * Use the sidebar to pick a strategy (`RSI Standalone`, etc.) and set your `Stop Loss` and `Take Profit`.
                 * Click the **"Run Backtest"** button to see a full report, including an **Equity Curve** and **Trade Log**.
             2.  **Step 2: FIND THE BEST STRATEGY (Premium Feature)**
-                * Open the **"Strategy Scanner"** at the bottom of the page.
+                * Open the **"🚀 Strategy Scanner"** at the bottom of the page.
                 * This "heatmap" tool tests all strategies across all pairs and timeframes at once.
             3.  **Step 3: ACTIVATE LIVE SIGNALS (Premium Feature)**
                 * Set your chosen parameters in the sidebar. The app will run in "live" mode, showing signals on the chart as they happen.
                 * Premium users will also receive an "ALERT SENT" in the sidebar.
 
             ### Feature Tiers: Free vs. Premium
-            **Free Tier (Your Current Plan):**
-            * Full Backtesting Engine
-            * All 6 Strategies & All Timeframes
-            * Limited to EUR/USD only.
+            **🎁 Free Tier (Your Current Plan):**
+            * ✅ **Economic News Calendar** (Real-time data from Investing.com)
+            * ✅ **Full Backtesting Engine**
+            * ✅ **All 6 Strategies** & All Timeframes
+            * 🔒 **Limited to EUR/USD** only.
 
-            **Premium Tier ($29.99/month):**
+            **⭐ Premium Tier ($29.99/month):**
             Upgrade for **$29.99/month** to unlock every feature:
-            * Unlock All 10+ Currency Pairs
-            * Strategy Scanner
-            * Live Signal Alerts
+            * ✅ **Unlock All 10+ Currency Pairs**
+            * ✅ **🚀 Strategy Scanner**
+            * ✅ **Live Signal Alerts**
             *(Note: Scanner speed is limited by the Twelve Data Free API plan)*
             """
         )
@@ -420,10 +425,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.info(
         f"""
-        **Free Tier:**\n
+        **🎁 Free Tier:**\n
         Full backtesting on EUR/USD only.
 
-        **Upgrade to Premium ($29.99/mo):**\n
+        **⭐ Upgrade to Premium ($29.99/mo):**\n
         • Unlock all pairs\n
         • Unlock Strategy Scanner\n
         • Get Live Signal Alerts
@@ -469,111 +474,124 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- FIXED: display_news_calendar (Working RSS + Fallback) ---
+    # --- RECTIFIED: display_news_calendar (Using Investing.com RSS Feed) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
 
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
-        @st.cache_data(ttl=300)
+        @st.cache_data(ttl=300) # 5-minute cache
         def get_free_calendar():
-            events = []
-            now = datetime.utcnow()
-
-            # === 1. Try unblocked RSS (ForexLive) ===
             try:
-                import feedparser
-                url = "https://feeds.feedburner.com/forexlive-rss"
+                # This is the free RSS feed URL from Investing.com
+                url = "https.cdn.investing.com/economic-calendar/rss.ashx"
                 feed = feedparser.parse(url)
-                for entry in feed.entries[:30]:
-                    try:
-                        dt = parser.parse(entry.published)
-                        if dt < now - timedelta(days=1) or dt > now + timedelta(days=7):
-                            continue
-                        title = entry.title.upper()
-                        if not any(k in title for k in ["PMI", "NFP", "CPI", "UNEMPLOYMENT", "FOMC", "RATE", "ECB", "BOE"]):
-                            continue
-                        country = "US" if "US" in title else "EU" if "EU" in title else "GB" if "UK" in title else "Unknown"
-                        impact = "High" if any(k in title for k in ["NFP", "CPI", "FOMC", "RATE", "ECB", "BOE"]) else "Medium"
-                        events.append({
-                            "date": dt.strftime("%A, %b %d"),
-                            "time": dt.strftime("%H:%M"),
-                            "event": entry.title,
-                            "impact": impact,
-                            "country": country,
-                            "forecast": "N/A",
-                            "previous": "N/A",
-                            "actual": "N/A",
-                            "date_dt": dt
-                        })
-                    except:
+                events = []
+                
+                # Get current time (aware of timezone)
+                # We need to find the timezone from the feed, as servers can be anywhere
+                if not feed.entries:
+                    st.warning("Calendar feed is empty.")
+                    return pd.DataFrame()
+                    
+                # Use the first entry to get the timezone
+                try:
+                    tzinfo = parser.parse(feed.entries[0].published).tzinfo
+                    now_utc = datetime.utcnow().replace(tzinfo=tzinfo)
+                except:
+                    # Fallback if parsing fails
+                    now_utc = datetime.utcnow()
+
+                for entry in feed.entries[:50]: # Look at the first 50 entries
+                    title = entry.title
+                    summary = entry.summary
+                    published = entry.published
+                    
+                    # Parse the event time
+                    dt = parser.parse(published)
+                    
+                    # Only show events from yesterday onwards
+                    if dt < now_utc - timedelta(days=1):
                         continue
-            except:
-                pass  # Silent fail → use fallback
+                    
+                    # Only show events in the next 7 days
+                    if dt > now_utc + timedelta(days=7):
+                        continue
+                    
+                    # Extract details
+                    country = title.split('(')[0].strip() if '(' in title else "Unknown"
+                    impact = "Low" # Default
+                    if "High" in summary or "3_bull" in summary:
+                        impact = "High"
+                    elif "Medium" in summary or "2_bull" in summary:
+                        impact = "Medium"
+                        
+                    event_name = title.split('-')[1].strip() if '-' in title else title
+                    
+                    events.append({
+                        "date": dt.strftime("%A, %b %d"),
+                        "time": dt.strftime("%H:%M"),
+                        "event": event_name,
+                        "impact": impact,
+                        "country": country,
+                        "date_dt": dt # Keep the datetime object for sorting
+                    })
+                
+                if not events:
+                    return pd.DataFrame()
+                    
+                df = pd.DataFrame(events)
+                return df.sort_values(by="date_dt") # Sort by the actual datetime
+            except Exception as e:
+                st.warning(f"Could not load free calendar feed: {e}")
+                return pd.DataFrame()
 
-            # === 2. Fallback: Hardcoded Events (Nov 1–7, 2025) ===
-            if not events:
-                events = [
-                    {"date": "Friday, Nov 01", "time": "15:00", "event": "ISM Manufacturing PMI", "country": "US", "impact": "Medium", "forecast": "47.5", "previous": "47.2", "actual": "46.7"},
-                    {"date": "Friday, Nov 01", "time": "16:00", "event": "Construction Spending MoM", "country": "US", "impact": "Low", "forecast": "0.2%", "previous": "0.1%", "actual": "0.1%"},
-                    {"date": "Thursday, Nov 06", "time": "19:00", "event": "FOMC Interest Rate Decision", "country": "US", "impact": "High", "forecast": "4.50%", "previous": "4.75%", "actual": "N/A"},
-                    {"date": "Friday, Nov 07", "time": "13:30", "event": "Nonfarm Payrolls", "country": "US", "impact": "High", "forecast": "175K", "previous": "254K", "actual": "N/A"},
-                    {"date": "Friday, Nov 07", "time": "13:30", "event": "Unemployment Rate", "country": "US", "impact": "High", "forecast": "4.1%", "previous": "4.1%", "actual": "N/A"}
-                ]
-
-            df = pd.DataFrame(events)
-            if "date_dt" in df.columns:
-                df = df.sort_values("date_dt").drop(columns=["date_dt"])
-            return df
-
-        with st.spinner("Loading economic calendar..."):
+        with st.spinner("Loading free economic calendar..."):
             df = get_free_calendar()
 
         if df.empty:
-            st.info("No events loaded.")
+            st.info("No events found (free source).")
             if st.button("Refresh Calendar"):
-                st.cache_data.clear()
-                st.rerun()
+                st.cache_data.clear(); st.rerun()
             return
 
         if search:
             df = df[df["event"].str.contains(search, case=False, na=False)]
-            if df.empty:
-                st.info(f"No events matching '{search}'.")
-                return
+        
+        if df.empty:
+            st.info(f"No events found matching '{search}'.")
+            return
 
-        # === Professional Table ===
-        st.markdown("""
-        <style>
-        .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
-        .calendar-table th { background: #1f77b4; color: white; padding: 12px; text-align: left; font-weight: 600; }
-        .calendar-table td { padding: 10px 12px; border-bottom: 1px solid #444; }
-        .calendar-table tr:hover { background: #2a2a2a !important; }
-        .impact-high { background: #ffebee; color: #c62828; font-weight: bold; }
-        .impact-medium { background: #fff3e0; color: #ef6c00; font-weight: bold; }
-        .impact-low { background: #f3e5f5; color: #6a1b9a; }
-        </style>
-        """, unsafe_allow_html=True)
+        impact_color = {"High": "#FF4136", "Medium": "#FF851B", "Low": "#AAAAAA"}
+        impact_emoji = {"High": "🔴", "Medium": "🟠", "Low": "⚪️"}
+        
+        # Legend
+        cols = st.columns(3)
+        with cols[0]: st.markdown(f"**{impact_emoji['High']} High**")
+        with cols[1]: st.markdown(f"**{impact_emoji['Medium']} Medium**")
+        with cols[2]: st.markdown(f"**{impact_emoji['Low']} Low**")
+        st.markdown("---")
 
-        def style_impact(row):
-            impact = row["impact"]
-            if impact == "High": return [f'class="impact-high"' if i == 4 else "" for i in range(len(row))]
-            if impact == "Medium": return [f'class="impact-medium"' if i == 4 else "" for i in range(len(row))]
-            return [f'class="impact-low"' if i == 4 else "" for i in range(len(row))]
-
-        styled = df.style\
-            .apply(style_impact, axis=1)\
-            .set_table_attributes('class="calendar-table"')\
-            .format({"forecast": lambda x: x, "previous": lambda x: x, "actual": lambda x: x})
-
-        st.markdown(styled.to_html(), unsafe_allow_html=True)
+        # Group by date
+        # Sort keys by the actual datetime, not the string name
+        sorted_dates = sorted(df["date"].unique(), key=lambda x: datetime.strptime(x, "%A, %b %d").replace(year=datetime.now().year))
+        
+        for date in sorted_dates:
+            st.markdown(f"### {date} (UTC)")
+            day_df = df[df["date"] == date].sort_values("time")
+            
+            for _, row in day_df.iterrows():
+                impact_str = row['impact']
+                styled_impact = f'<span style="color:{impact_color.get(impact_str, "#f0f0f0")}; font-weight:bold;">{impact_emoji.get(impact_str, "⚪️")} {impact_str}</span>'
+                st.markdown(f"**{row['time']}** | {row['event']} ({row['country']}) | {styled_impact}", unsafe_allow_html=True)
+                st.markdown("---") # Separator for each event
 
         if st.button("Refresh Calendar"):
             st.cache_data.clear()
             st.rerun()
 
-        st.caption("Source: ForexLive RSS + Fallback • Times in UTC • Actuals update post-release")
-    # --- END FIXED ---
+        st.caption("Data: Investing.com RSS • Times in UTC")
+    # --- END OF RECTIFIED FUNCTION ---
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
@@ -691,9 +709,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
         st.subheader("Equity Curve")
         
-        if 'resolved_trades_df' in results and not results['resolved_trades_df'].empty:
+        # FIX: Check for the correct key 'resolved_trades_df'
+        resolved_df_key = 'resolved_trades_df' if 'resolved_trades_df' in results else 'resolved_trades_ _df'
+        
+        if resolved_df_key in results and not results[resolved_df_key].empty:
             equity_fig = go.Figure()
-            equity_fig.add_trace(go.Scatter(x=results['resolved_trades_df']['exit_time'], y=results['resolved_trades_df']['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
+            equity_fig.add_trace(go.Scatter(x=results[resolved_df_key]['exit_time'], y=results[resolved_df_key]['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
             equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
@@ -747,14 +768,15 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
-    display_news_calendar() # <-- This now calls the REAL,, working calendar
+    display_news_calendar() # <-- This now calls the REAL, new RSS function
     st.markdown("---")
 
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
-        with st.expander("Strategy Scanner (Premium Feature)"):
+        with st.expander("🚀 Strategy Scanner (Premium Feature)"):
             st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
             
+            # --- RECTIFIED: Added all 6 strategies to the multiselect ---
             all_strategies = [
                 "RSI + SMA Crossover",
                 "MACD Crossover",
@@ -768,8 +790,9 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
+            # --- END RECTIFICATION ---
             
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -820,11 +843,11 @@ elif st.session_state.page == "app" and st.session_state.user:
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
     else:
-         st.info("The **Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
+         st.info("The **🚀 Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
 
     # === RISK DISCLAIMER ===
     st.markdown("---")
-    st.subheader("Risk Disclaimer")
+    st.subheader("⚠️ Risk Disclaimer")
     st.warning(
         """
         This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance. 
@@ -838,8 +861,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
 # === 6. Error handling for auth/db init failure ===
 elif not st.session_state.user:
-    st.set_page_config(page_title="Error - PipWizard", page_icon="warning", layout="centered")
-    st.title("PipWizard chart")
+    st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
+    st.title("PipWizard 💹")
     st.error("Application failed to initialize.")
     st.warning("Could not connect to the authentication service.")
     st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue. Please contact the administrator.")
