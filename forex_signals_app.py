@@ -479,7 +479,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 # ForexFactory JSON API (free, live, unblocked)
                 url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
                 response = requests.get(url, timeout=10)
-                response.raise_for_status() # Will raise an error for bad status (4xx or 5xx)
                 data = response.json()
                 
                 events = []
@@ -778,7 +777,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     if show_rsi:
         fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=rsi_row, col=1)
         fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=rsi_row, col=1)
-        fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a6c_row, col=1)
+        fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
         fig.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=rsi_row, col=1)
         fig.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=rsi_row, col=1)
     if show_macd:
@@ -855,7 +854,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if scan_results:
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
                         def style_profit(val):
-                            color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0fD'; return f'color: {color}; font-weight: bold;'
+                            color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0f0'; return f'color: {color}; font-weight: bold;'
                         def style_win_rate(val):
                             val = max(0, min(100, val)); color = 'white'
                             if val < 50: return f'background-color: rgba(239, 83, 80, {1 - (val/50)}); color: {color};'
