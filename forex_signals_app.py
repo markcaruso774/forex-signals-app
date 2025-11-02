@@ -469,7 +469,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- NEW CALENDAR FUNCTION (REPLACED) ---
+    # --- NEW CALENDAR FUNCTION (FIXED) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
@@ -518,6 +518,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                         "date_dt": event_time
                     })
                 df = pd.DataFrame(events)
+                # We drop date_dt BEFORE styling, so column indexes are correct
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
             except:
                 return pd.DataFrame([{
@@ -541,12 +542,14 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.info(f"No events matching '{search}'.")
                 return
 
+        # This style block is still used for the table structure (th, td, hover)
         st.markdown("""
         <style>
         .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
         .calendar-table th { background: #1f77b4; color: white; padding: 12px; text-align: left; font-weight: 600; }
         .calendar-table td { padding: 10px 12px; border-bottom: 1px solid #444; }
         .calendar-table tr:hover { background: #2a2a2a !important; }
+        /* These class definitions are now also used by the Python function */
         .impact-high { background: #ffebee; color: #c62828; font-weight: bold; }
         .impact-medium { background: #fff3e0; color: #ef6c00; font-weight: bold; }
         .impact-low { background: #f3e5f5; color: #6a1b9a; }
@@ -556,17 +559,41 @@ elif st.session_state.page == "app" and st.session_state.user:
         </style>
         """, unsafe_allow_html=True)
 
+        # --- THIS IS THE FIXED FUNCTION ---
         def style_row(row):
+            # Create a list of empty CSS strings, matching the number of columns
             styles = [""] * len(row)
-            if row["impact"] == "High": styles[4] = 'class="impact-high"'
-            elif row["impact"] == "Medium": styles[4] = 'class="impact-medium"'
-            elif row["impact"] == "Low": styles[4] = 'class="impact-low"'
-            if row["surprise"] == "Better than Expected": styles[8] = 'class="actual-better"'
-            elif row["surprise"] == "Worse than Expected": styles[8] = 'class="actual-worse"'
-            elif row["surprise"] == "As Expected": styles[8] = 'class="actual-expected"'
+            
+            # Column indices in the DataFrame:
+            # 0:date, 1:time, 2:event, 3:country, 4:impact, 5:forecast, 6:previous, 7:actual, 8:surprise
+            
+            # Define the styles directly as CSS strings
+            impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
+            impact_medium_css = "background: #fff3e0; color: #ef6c00; font-weight: bold;"
+            impact_low_css = "background: #f3e5f5; color: #6a1b9a;"
+            
+            actual_better_css = "background: #e8f5e8; color: #2e7d32; font-weight: bold;"
+            actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
+            actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
+            
+            # Apply the CSS strings to the correct column index
+            if row["impact"] == "High": styles[4] = impact_high_css
+            elif row["impact"] == "Medium": styles[4] = impact_medium_css
+            elif row["impact"] == "Low": styles[4] = impact_low_css
+            
+            # Apply to the 'surprise' column (index 8)
+            if row["surprise"] == "Better than Expected": styles[8] = actual_better_css
+            elif row["surprise"] == "Worse than Expected": styles[8] = actual_worse_css
+            elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
+            
             return styles
+        # --- END OF FIX ---
 
+        # The DataFrame columns are: date, time, event, country, impact, forecast, previous, actual, surprise
+        # We apply the style_row function, and it now returns valid CSS.
         styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
+        
+        # This line should no longer crash
         st.markdown(styled.to_html(), unsafe_allow_html=True)
 
         if st.button("Refresh Calendar"):
@@ -848,7 +875,7 @@ elif not st.session_state.user:
     st.title("PipWizard 💹")
     st.error("Application failed to initialize.")
     st.warning("Could not connect to the authentication service.")
-    st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue. Please contact the administrator.")
+    st.info("This may be due to missing Streamlit Secrets or. Please contact the administrator.")
     st.code(f"""
     Error Details:
     Auth object: {'Initialized' if auth else 'Failed'}
