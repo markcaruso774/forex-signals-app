@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta 
+from datetime import datetime, timedelta, timezone # <-- ADDED timezone
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
@@ -486,15 +486,24 @@ elif st.session_state.page == "app" and st.session_state.user:
                 data = response.json()
                 
                 events = []
-                now = datetime.utcnow()
+                # --- FIX: Replaced datetime.utcnow() ---
+                now = datetime.now(timezone.utc)
                 
                 for e in data:
                     # Handle potential missing time, default to 00:00
                     event_time_str = e.get("time", "00:00:00")
                     if not event_time_str: event_time_str = "00:00:00"
-
-                    event_time = datetime.strptime(e["date"] + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
                     
+                    # --- FIX: Ensure date string is not None ---
+                    date_str = e.get("date")
+                    if not date_str:
+                        continue # Skip event if date is missing
+
+                    event_time = datetime.strptime(date_str + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
+                    
+                    # --- FIX: Make event_time timezone-aware for comparison ---
+                    event_time = event_time.replace(tzinfo=timezone.utc)
+
                     if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
                         continue
                     
@@ -743,7 +752,8 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
-        st.dataframe(results['trade_df'], use_container_width=True)
+        # --- FIX: Replaced use_container_width ---
+        st.dataframe(results['trade_df'], width='stretch')
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
@@ -784,7 +794,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig.update_yaxes(title_text="MACD", row=macd_row, col=1)
         fig.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=macd_row, col=1)
     
-    # --- THIS IS THE FIXED LINE ---
+    # --- THIS IS THE CRASH FIX ---
     fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -859,13 +869,15 @@ elif st.session_state.page == "app" and st.session_state.user:
                             else: return f'background-color: rgba(38, 166, 154, {(val-50)/50}); color: {color};'
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
+                        
+                        # --- FIX: Replaced use_container_width ---
                         st.dataframe(
                             results_df.style
                                 .applymap(style_profit, subset=['Total Profit ($)'])
                                 .apply(lambda x: [style_win_rate(v) for v in x], subset=['Win Rate (%)'])
                                 .applymap(style_profit_factor, subset=['Profit Factor'])
                                 .format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}),
-                            use_container_width=True
+                            width='stretch'
                         )
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
