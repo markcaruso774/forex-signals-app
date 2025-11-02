@@ -783,7 +783,10 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], name='Histogram', marker_color=colors), row=macd_row, col=1)
         fig.update_yaxes(title_text="MACD", row=macd_row, col=1)
         fig.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=macd_row, col=1)
-    fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangesli_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    
+    # --- THIS IS THE FIXED LINE ---
+    fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
