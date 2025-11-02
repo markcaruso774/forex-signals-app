@@ -164,7 +164,7 @@ def verify_payment(reference):
         return False
 
     try:
-        url = f"https.api.paystack.co/transaction/verify/{reference}"
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
         response = requests.get(url, headers=headers)
@@ -477,7 +477,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                url = "https.api.forexcalendar.com/v1/events"
+                url = "https://api.forexcalendar.com/v1/events"
                 params = {"days": 7, "currency": "USD,EUR,GBP,JPY,CAD,AUD,NZD"}
                 response = requests.get(url, params=params, timeout=10)
                 data = response.json().get("events", [])
