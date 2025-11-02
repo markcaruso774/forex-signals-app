@@ -476,7 +476,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                # ✅ Try EconoPy first (most reliable)
+ # ✅ Try EconoPy first (most reliable)
+    
     url = "https://econopy.io/api/calendar?days=30"
     response = requests.get(url, timeout=10)
     data = response.json()
