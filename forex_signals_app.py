@@ -476,12 +476,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                # ForexFactory JSON API (free, live, unblocked)
-                url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-                response = requests.get(url, timeout=10)
-                data = response.json()
                 # ✅ Try EconoPy first (most reliable)
-try:
     url = "https://econopy.io/api/calendar?days=30"
     response = requests.get(url, timeout=10)
     data = response.json()
