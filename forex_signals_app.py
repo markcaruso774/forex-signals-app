@@ -116,7 +116,7 @@ def create_payment_link(email, user_id):
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
-    url = "https.api.paystack.co/transaction/initialize"
+    url = "https://api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
         "Content-Type": "application/json"
