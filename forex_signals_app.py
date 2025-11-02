@@ -480,6 +480,20 @@ elif st.session_state.page == "app" and st.session_state.user:
                 url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
                 response = requests.get(url, timeout=10)
                 data = response.json()
+                # ✅ Try EconoPy first (most reliable)
+try:
+    url = "https://econopy.io/api/calendar?days=30"
+    response = requests.get(url, timeout=10)
+    data = response.json()
+    if not data or len(data) < 3:
+        raise Exception("EconoPy returned empty data")
+
+# ✅ Fallback: TradingEconomics guest API (always online)
+except Exception as e:
+    print(f"EconoPy failed: {e}")
+    url = "https://api.tradingeconomics.com/calendar?c=guest:guest"
+    response = requests.get(url, timeout=10)
+    data = response.json()
                 
                 events = []
                 # --- FIX: Replaced datetime.utcnow() ---
