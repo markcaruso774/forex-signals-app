@@ -10,7 +10,6 @@ from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & NEW Calendar
-# Removed: feedparser and dateutil.parser
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -116,7 +115,6 @@ def create_payment_link(email, user_id):
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
-    # --- FIX: Changed 'https.' to 'https://' ---
     url = "https://api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
@@ -165,7 +163,6 @@ def verify_payment(reference):
         return False
 
     try:
-        # --- FIX: Changed 'https.' to 'https://' ---
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
@@ -471,12 +468,11 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- NEW CALENDAR FUNCTION (REPLACED) ---
+    # --- CALENDAR FUNCTION (WITH DEBUG PRINTING) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
-        # --- THIS IS THE NEW, REPLACED INNER FUNCTION ---
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
@@ -554,8 +550,9 @@ elif st.session_state.page == "app" and st.session_state.user:
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
             
             except Exception as e:
-                # Log the error to the Streamlit console for debugging
-                print(f"Error in get_free_calendar: {e}")
+                # --- THIS IS THE CRITICAL LINE ---
+                print(f"Error in get_free_calendar: {e}") 
+                # ---
                 # Fallback
                 return pd.DataFrame([
                     {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
@@ -579,7 +576,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.info(f"No events matching '{search}'.")
                 return
 
-        # This style block is UNCHANGED and provides the table's appearance
         st.markdown("""
         <style>
         .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
@@ -595,7 +591,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         </style>
         """, unsafe_allow_html=True)
 
-        # This styling function is UNCHANGED and works with the new data
         def style_row(row):
             styles = [""] * len(row)
             impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
@@ -624,7 +619,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.rerun()
 
         st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
-    # --- END OF NEW CALENDAR FUNCTION ---
+    # --- END OF CALENDAR FUNCTION ---
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
@@ -742,7 +737,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
         st.subheader("Equity Curve")
         
-        # FIX: Check for the correct key 'resolved_trades_df'
         resolved_df_key = 'resolved_trades_df' if 'resolved_trades_df' in results else 'resolved_trades_ _df'
         
         if resolved_df_key in results and not results[resolved_df_key].empty:
@@ -794,7 +788,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig.update_yaxes(title_text="MACD", row=macd_row, col=1)
         fig.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=macd_row, col=1)
     
-    # --- THIS IS THE CRASH FIX ---
+    # --- CRASH FIX ---
     fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -813,7 +807,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
             st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
             
-            # --- RECTIFIED: Added all 6 strategies to the multiselect ---
             all_strategies = [
                 "RSI + SMA Crossover",
                 "MACD Crossover",
@@ -827,7 +820,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
-            # --- END RECTIFICATION ---
             
             scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
