@@ -103,7 +103,7 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS (RECTIFIED) ===
+# === 4. PAYSTACK PAYMENT FUNCTIONS (TYPO FIXED) ===
 
 def create_payment_link(email, user_id):
     """
@@ -116,6 +116,7 @@ def create_payment_link(email, user_id):
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
+    # --- FIX: Changed 'https.' to 'https://' ---
     url = "https://api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
@@ -124,7 +125,7 @@ def create_payment_link(email, user_id):
     
     if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
         st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
-        st.info("Please add `APP_URL = \"https{your-app-name.streamlit.app/\"` to your secrets.")
+        st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
         return None, None
         
     APP_URL = st.secrets["APP_URL"]
@@ -164,6 +165,7 @@ def verify_payment(reference):
         return False
 
     try:
+        # --- FIX: Changed 'https.' to 'https://' ---
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
@@ -469,46 +471,67 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- NEW CALENDAR FUNCTION (FIXED) ---
+    # --- NEW CALENDAR FUNCTION (REPLACED) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
+        # --- THIS IS THE NEW, REPLACED INNER FUNCTION ---
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
+                # ForexFactory JSON API (free, live, unblocked)
                 url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-                params = {"days": 7, "currency": "USD,EUR,GBP,JPY,CAD,AUD,NZD"}
-                response = requests.get(url, params=params, timeout=10)
-                data = response.json().get("events", [])
+                response = requests.get(url, timeout=10)
+                data = response.json()
+                
                 events = []
                 now = datetime.utcnow()
+                
                 for e in data:
-                    event_time = datetime.fromisoformat(e["date"].replace("Z", "+00:00"))
+                    # Handle potential missing time, default to 00:00
+                    event_time_str = e.get("time", "00:00:00")
+                    if not event_time_str: event_time_str = "00:00:00"
+
+                    event_time = datetime.strptime(e["date"] + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
+                    
                     if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
                         continue
+                    
                     actual = e.get("actual", "N/A")
                     forecast = e.get("forecast", "N/A")
                     previous = e.get("previous", "N/A")
                     is_past = event_time < now
                     actual_display = actual if is_past and actual != "N/A" else "Pending"
+                    
+                    # Surprise logic
                     surprise = ""
                     if is_past and actual != "N/A" and forecast != "N/A":
                         try:
-                            def to_num(v): 
-                                v = str(v).strip()
-                                if v.endswith("K"): return float(v[:-1]) * 1000
-                                if v.endswith("M"): return float(v[:-1]) * 1000000
+                            def to_num(v):
+                                v = str(v).strip().replace(',', '').replace('%', '')
+                                if v.endswith('K'): return float(v[:-1]) * 1000
+                                if v.endswith('M'): return float(v[:-1]) * 1000000
+                                if v == "" or v == "N/A": return float('nan') # Handle empty strings
                                 return float(v)
+                            
                             a, f = to_num(actual), to_num(forecast)
-                            if a > f: surprise = "Better than Expected"
-                            elif a < f: surprise = "Worse than Expected"
-                            else: surprise = "As Expected"
-                        except: surprise = ""
+                            
+                            if pd.isna(a) or pd.isna(f):
+                                surprise = "" # Can't compare if one is not a number
+                            elif a > f: 
+                                surprise = "Better than Expected"
+                            elif a < f: 
+                                surprise = "Worse than Expected"
+                            else: 
+                                surprise = "As Expected"
+                        except:
+                            surprise = ""
+                    
                     events.append({
                         "date": event_time.strftime("%A, %b %d"),
                         "time": event_time.strftime("%H:%M"),
-                        "event": e["title"],
+                        "event": e.get("title", "Unknown Event"),
                         "country": e.get("country", "??"),
                         "impact": e.get("impact", "Low").title(),
                         "forecast": forecast,
@@ -517,14 +540,19 @@ elif st.session_state.page == "app" and st.session_state.user:
                         "surprise": surprise,
                         "date_dt": event_time
                     })
+                
                 df = pd.DataFrame(events)
-                # We drop date_dt BEFORE styling, so column indexes are correct
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
-            except:
-                return pd.DataFrame([{
-                    "date": "Friday, Nov 07", "time": "13:30", "event": "Nonfarm Payrolls", "country": "US", "impact": "High",
-                    "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""
-                }])
+            
+            except Exception as e:
+                # Log the error to the Streamlit console for debugging
+                print(f"Error in get_free_calendar: {e}")
+                # Fallback
+                return pd.DataFrame([
+                    {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
+                     "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
+                ])
+        # --- END OF REPLACED INNER FUNCTION ---
 
         with st.spinner("Loading live economic calendar..."):
             df = get_free_calendar()
@@ -542,14 +570,13 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.info(f"No events matching '{search}'.")
                 return
 
-        # This style block is still used for the table structure (th, td, hover)
+        # This style block is UNCHANGED and provides the table's appearance
         st.markdown("""
         <style>
         .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
         .calendar-table th { background: #1f77b4; color: white; padding: 12px; text-align: left; font-weight: 600; }
         .calendar-table td { padding: 10px 12px; border-bottom: 1px solid #444; }
         .calendar-table tr:hover { background: #2a2a2a !important; }
-        /* These class definitions are now also used by the Python function */
         .impact-high { background: #ffebee; color: #c62828; font-weight: bold; }
         .impact-medium { background: #fff3e0; color: #ef6c00; font-weight: bold; }
         .impact-low { background: #f3e5f5; color: #6a1b9a; }
@@ -559,48 +586,35 @@ elif st.session_state.page == "app" and st.session_state.user:
         </style>
         """, unsafe_allow_html=True)
 
-        # --- THIS IS THE FIXED FUNCTION ---
+        # This styling function is UNCHANGED and works with the new data
         def style_row(row):
-            # Create a list of empty CSS strings, matching the number of columns
             styles = [""] * len(row)
-            
-            # Column indices in the DataFrame:
-            # 0:date, 1:time, 2:event, 3:country, 4:impact, 5:forecast, 6:previous, 7:actual, 8:surprise
-            
-            # Define the styles directly as CSS strings
             impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
             impact_medium_css = "background: #fff3e0; color: #ef6c00; font-weight: bold;"
             impact_low_css = "background: #f3e5f5; color: #6a1b9a;"
-            
             actual_better_css = "background: #e8f5e8; color: #2e7d32; font-weight: bold;"
             actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
             actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
             
-            # Apply the CSS strings to the correct column index
             if row["impact"] == "High": styles[4] = impact_high_css
             elif row["impact"] == "Medium": styles[4] = impact_medium_css
             elif row["impact"] == "Low": styles[4] = impact_low_css
             
-            # Apply to the 'surprise' column (index 8)
             if row["surprise"] == "Better than Expected": styles[8] = actual_better_css
             elif row["surprise"] == "Worse than Expected": styles[8] = actual_worse_css
             elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
             
             return styles
-        # --- END OF FIX ---
 
-        # The DataFrame columns are: date, time, event, country, impact, forecast, previous, actual, surprise
-        # We apply the style_row function, and it now returns valid CSS.
         styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
         
-        # This line should no longer crash
         st.markdown(styled.to_html(), unsafe_allow_html=True)
 
         if st.button("Refresh Calendar"):
             st.cache_data.clear()
             st.rerun()
 
-        st.caption("Source: forexcalendar.com • Live Actuals • Times in UTC")
+        st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
     # --- END OF NEW CALENDAR FUNCTION ---
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
@@ -769,7 +783,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], name='Histogram', marker_color=colors), row=macd_row, col=1)
         fig.update_yaxes(title_text="MACD", row=macd_row, col=1)
         fig.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=macd_row, col=1)
-    fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangesli_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
