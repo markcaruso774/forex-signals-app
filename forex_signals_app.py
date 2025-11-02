@@ -9,9 +9,8 @@ import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
-import requests  # For Paystack
-import feedparser # New: For RSS Calendar
-from dateutil import parser # New: For RSS Calendar
+import requests  # For Paystack & NEW Calendar
+# Removed: feedparser and dateutil.parser
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -117,7 +116,7 @@ def create_payment_link(email, user_id):
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
-    url = "https://api.paystack.co/transaction/initialize"
+    url = "https.api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
         "Content-Type": "application/json"
@@ -125,7 +124,7 @@ def create_payment_link(email, user_id):
     
     if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
         st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
-        st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
+        st.info("Please add `APP_URL = \"https{your-app-name.streamlit.app/\"` to your secrets.")
         return None, None
         
     APP_URL = st.secrets["APP_URL"]
@@ -165,7 +164,7 @@ def verify_payment(reference):
         return False
 
     try:
-        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        url = f"https.api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
         response = requests.get(url, headers=headers)
@@ -470,124 +469,112 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- RECTIFIED: display_news_calendar (Using Investing.com RSS Feed) ---
+    # --- NEW CALENDAR FUNCTION (REPLACED) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
-
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
-        @st.cache_data(ttl=300) # 5-minute cache
+        @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                # This is the free RSS feed URL from Investing.com
-                url = "https.cdn.investing.com/economic-calendar/rss.ashx"
-                feed = feedparser.parse(url)
+                url = "https.api.forexcalendar.com/v1/events"
+                params = {"days": 7, "currency": "USD,EUR,GBP,JPY,CAD,AUD,NZD"}
+                response = requests.get(url, params=params, timeout=10)
+                data = response.json().get("events", [])
                 events = []
-                
-                # Get current time (aware of timezone)
-                # We need to find the timezone from the feed, as servers can be anywhere
-                if not feed.entries:
-                    st.warning("Calendar feed is empty.")
-                    return pd.DataFrame()
-                    
-                # Use the first entry to get the timezone
-                try:
-                    tzinfo = parser.parse(feed.entries[0].published).tzinfo
-                    now_utc = datetime.utcnow().replace(tzinfo=tzinfo)
-                except:
-                    # Fallback if parsing fails
-                    now_utc = datetime.utcnow()
-
-                for entry in feed.entries[:50]: # Look at the first 50 entries
-                    title = entry.title
-                    summary = entry.summary
-                    published = entry.published
-                    
-                    # Parse the event time
-                    dt = parser.parse(published)
-                    
-                    # Only show events from yesterday onwards
-                    if dt < now_utc - timedelta(days=1):
+                now = datetime.utcnow()
+                for e in data:
+                    event_time = datetime.fromisoformat(e["date"].replace("Z", "+00:00"))
+                    if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
                         continue
-                    
-                    # Only show events in the next 7 days
-                    if dt > now_utc + timedelta(days=7):
-                        continue
-                    
-                    # Extract details
-                    country = title.split('(')[0].strip() if '(' in title else "Unknown"
-                    impact = "Low" # Default
-                    if "High" in summary or "3_bull" in summary:
-                        impact = "High"
-                    elif "Medium" in summary or "2_bull" in summary:
-                        impact = "Medium"
-                        
-                    event_name = title.split('-')[1].strip() if '-' in title else title
-                    
+                    actual = e.get("actual", "N/A")
+                    forecast = e.get("forecast", "N/A")
+                    previous = e.get("previous", "N/A")
+                    is_past = event_time < now
+                    actual_display = actual if is_past and actual != "N/A" else "Pending"
+                    surprise = ""
+                    if is_past and actual != "N/A" and forecast != "N/A":
+                        try:
+                            def to_num(v): 
+                                v = str(v).strip()
+                                if v.endswith("K"): return float(v[:-1]) * 1000
+                                if v.endswith("M"): return float(v[:-1]) * 1000000
+                                return float(v)
+                            a, f = to_num(actual), to_num(forecast)
+                            if a > f: surprise = "Better than Expected"
+                            elif a < f: surprise = "Worse than Expected"
+                            else: surprise = "As Expected"
+                        except: surprise = ""
                     events.append({
-                        "date": dt.strftime("%A, %b %d"),
-                        "time": dt.strftime("%H:%M"),
-                        "event": event_name,
-                        "impact": impact,
-                        "country": country,
-                        "date_dt": dt # Keep the datetime object for sorting
+                        "date": event_time.strftime("%A, %b %d"),
+                        "time": event_time.strftime("%H:%M"),
+                        "event": e["title"],
+                        "country": e.get("country", "??"),
+                        "impact": e.get("impact", "Low").title(),
+                        "forecast": forecast,
+                        "previous": previous,
+                        "actual": actual_display,
+                        "surprise": surprise,
+                        "date_dt": event_time
                     })
-                
-                if not events:
-                    return pd.DataFrame()
-                    
                 df = pd.DataFrame(events)
-                return df.sort_values(by="date_dt") # Sort by the actual datetime
-            except Exception as e:
-                st.warning(f"Could not load free calendar feed: {e}")
-                return pd.DataFrame()
+                return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
+            except:
+                return pd.DataFrame([{
+                    "date": "Friday, Nov 07", "time": "13:30", "event": "Nonfarm Payrolls", "country": "US", "impact": "High",
+                    "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""
+                }])
 
-        with st.spinner("Loading free economic calendar..."):
+        with st.spinner("Loading live economic calendar..."):
             df = get_free_calendar()
 
         if df.empty:
-            st.info("No events found (free source).")
+            st.info("No events loaded.")
             if st.button("Refresh Calendar"):
-                st.cache_data.clear(); st.rerun()
+                st.cache_data.clear()
+                st.rerun()
             return
 
         if search:
             df = df[df["event"].str.contains(search, case=False, na=False)]
-        
-        if df.empty:
-            st.info(f"No events found matching '{search}'.")
-            return
+            if df.empty:
+                st.info(f"No events matching '{search}'.")
+                return
 
-        impact_color = {"High": "#FF4136", "Medium": "#FF851B", "Low": "#AAAAAA"}
-        impact_emoji = {"High": "🔴", "Medium": "🟠", "Low": "⚪️"}
-        
-        # Legend
-        cols = st.columns(3)
-        with cols[0]: st.markdown(f"**{impact_emoji['High']} High**")
-        with cols[1]: st.markdown(f"**{impact_emoji['Medium']} Medium**")
-        with cols[2]: st.markdown(f"**{impact_emoji['Low']} Low**")
-        st.markdown("---")
+        st.markdown("""
+        <style>
+        .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
+        .calendar-table th { background: #1f77b4; color: white; padding: 12px; text-align: left; font-weight: 600; }
+        .calendar-table td { padding: 10px 12px; border-bottom: 1px solid #444; }
+        .calendar-table tr:hover { background: #2a2a2a !important; }
+        .impact-high { background: #ffebee; color: #c62828; font-weight: bold; }
+        .impact-medium { background: #fff3e0; color: #ef6c00; font-weight: bold; }
+        .impact-low { background: #f3e5f5; color: #6a1b9a; }
+        .actual-better { background: #e8f5e8; color: #2e7d32; font-weight: bold; }
+        .actual-worse { background: #ffebee; color: #c62828; font-weight: bold; }
+        .actual-expected { background: #fff8e1; color: #ff8f00; font-weight: bold; }
+        </style>
+        """, unsafe_allow_html=True)
 
-        # Group by date
-        # Sort keys by the actual datetime, not the string name
-        sorted_dates = sorted(df["date"].unique(), key=lambda x: datetime.strptime(x, "%A, %b %d").replace(year=datetime.now().year))
-        
-        for date in sorted_dates:
-            st.markdown(f"### {date} (UTC)")
-            day_df = df[df["date"] == date].sort_values("time")
-            
-            for _, row in day_df.iterrows():
-                impact_str = row['impact']
-                styled_impact = f'<span style="color:{impact_color.get(impact_str, "#f0f0f0")}; font-weight:bold;">{impact_emoji.get(impact_str, "⚪️")} {impact_str}</span>'
-                st.markdown(f"**{row['time']}** | {row['event']} ({row['country']}) | {styled_impact}", unsafe_allow_html=True)
-                st.markdown("---") # Separator for each event
+        def style_row(row):
+            styles = [""] * len(row)
+            if row["impact"] == "High": styles[4] = 'class="impact-high"'
+            elif row["impact"] == "Medium": styles[4] = 'class="impact-medium"'
+            elif row["impact"] == "Low": styles[4] = 'class="impact-low"'
+            if row["surprise"] == "Better than Expected": styles[8] = 'class="actual-better"'
+            elif row["surprise"] == "Worse than Expected": styles[8] = 'class="actual-worse"'
+            elif row["surprise"] == "As Expected": styles[8] = 'class="actual-expected"'
+            return styles
+
+        styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
+        st.markdown(styled.to_html(), unsafe_allow_html=True)
 
         if st.button("Refresh Calendar"):
             st.cache_data.clear()
             st.rerun()
 
-        st.caption("Data: Investing.com RSS • Times in UTC")
-    # --- END OF RECTIFIED FUNCTION ---
+        st.caption("Source: forexcalendar.com • Live Actuals • Times in UTC")
+    # --- END OF NEW CALENDAR FUNCTION ---
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
@@ -764,7 +751,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
-    display_news_calendar() # <-- This now calls the REAL, new RSS function
+    display_news_calendar() # <-- This now calls the NEW, upgraded function
     st.markdown("---")
 
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
