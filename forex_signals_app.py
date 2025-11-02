@@ -3,17 +3,16 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, timezone # <-- ADDED timezone
+from datetime import datetime, timedelta, timezone
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
-import pyrebase  # For Firebase
-import json      # For Firebase
-import requests  # For Paystack & NEW Calendar
+import pyrebase
+import json
+import requests
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
-    """Loads Firebase config from Streamlit Secrets and initializes the app."""
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
             st.error("Firebase config not found in Streamlit Secrets.")
@@ -49,7 +48,7 @@ if 'user' not in st.session_state:
 if 'is_premium' not in st.session_state:
     st.session_state.is_premium = False
 if 'page' not in st.session_state:
-    st.session_state.page = "login" # Start on 'login'
+    st.session_state.page = "login"
 
 # === 3. AUTHENTICATION FUNCTIONS ===
 def sign_up(email, password):
@@ -102,15 +101,9 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS (TYPO FIXED) ===
-
+# === 4. PAYSTACK PAYMENT FUNCTIONS ===
 def create_payment_link(email, user_id):
-    """
-    Calls Paystack API to create a one-time payment link.
-    """
-    
-    test_amount_kobo = 10000 # 100 NGN * 100 kobo
-    
+    test_amount_kobo = 10000
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
@@ -122,8 +115,7 @@ def create_payment_link(email, user_id):
     }
     
     if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
-        st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
-        st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
+        st.error("APP_URL is not set in Streamlit Secrets.")
         return None, None
         
     APP_URL = st.secrets["APP_URL"]
@@ -131,7 +123,7 @@ def create_payment_link(email, user_id):
     payload = {
         "email": email,
         "amount": test_amount_kobo, 
-        "callback_url": APP_URL, # Redirect back to the main app
+        "callback_url": APP_URL,
         "metadata": {
             "user_id": user_id,
             "user_email": email,
@@ -155,9 +147,6 @@ def create_payment_link(email, user_id):
         return None, None
 
 def verify_payment(reference):
-    """
-    Calls Paystack to verify a transaction reference.
-    """
     if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Services not initialized.")
         return False
@@ -176,11 +165,10 @@ def verify_payment(reference):
             user_id = metadata.get("user_id")
             
             if user_id:
-                # Update user's status in Firebase
                 db.child("users").child(user_id).update({"subscription_status": "premium"})
                 st.session_state.is_premium = True
                 st.balloons()
-                st.session_state.page = "app" # Go back to the main app
+                st.session_state.page = "app"
                 
                 try:
                     st.query_params.clear()
@@ -201,15 +189,15 @@ def verify_payment(reference):
 
 # === 5. LOGIN/SIGN UP PAGE ===
 if st.session_state.page == "login":
-    st.set_page_config(page_title="Login - PipWizard", page_icon="💹", layout="centered")
+    st.set_page_config(page_title="Login - PipWizard", page_icon="Forex", layout="centered")
 
     if auth is None or db is None:
-        st.title("PipWizard 💹")
+        st.title("PipWizard")
         st.error("Application failed to initialize.")
         st.warning("Could not connect to the authentication service.")
         st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue.")
     else:
-        st.title(f"Welcome to PipWizard 💹")
+        st.title(f"Welcome to PipWizard")
         st.text("Please log in or sign up to continue.")
         action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
         email = st.text_input("Email")
@@ -232,9 +220,9 @@ if st.session_state.page == "login":
 
 # === 6. PROFILE / UPGRADE PAGE ===
 elif st.session_state.page == "profile":
-    st.set_page_config(page_title="Profile - PipWizard", page_icon="💹", layout="centered")
+    st.set_page_config(page_title="Profile - PipWizard", page_icon="Forex", layout="centered")
     
-    st.title(f"Profile & Subscription 💹")
+    st.title(f"Profile & Subscription")
     
     if st.session_state.user and 'email' in st.session_state.user:
         st.write(f"Logged in as: `{st.session_state.user['email']}`")
@@ -270,15 +258,14 @@ elif st.session_state.page == "profile":
 
 # === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
-    st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
+    st.set_page_config(page_title="PipWizard", page_icon="Forex", layout="wide")
 
-    # --- NEW: Check for Payment Callback ---
+    # --- Payment Callback Check ---
     query_params = st.query_params
     if "trxref" in query_params:
         reference = query_params["trxref"]
         with st.spinner(f"Verifying your payment ({reference})..."):
             verify_payment(reference)
-    # --- End Payment Check ---
 
     # === CONFIG ===
     ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
@@ -320,12 +307,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     with col1:
         st.title("PipWizard – Live Forex Signals")
     with col2:
-        theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
+        theme_label = "Light" if st.session_state.theme == "dark" else "Dark"
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
     # === ABOUT THE APP SECTION ===
-    with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
+    with st.expander("Welcome to PipWizard! Click here to learn about the app."):
         st.markdown(
             f"""
             ### What is PipWizard?
@@ -337,24 +324,23 @@ elif st.session_state.page == "app" and st.session_state.user:
                 * Use the sidebar to pick a strategy (`RSI Standalone`, etc.) and set your `Stop Loss` and `Take Profit`.
                 * Click the **"Run Backtest"** button to see a full report, including an **Equity Curve** and **Trade Log**.
             2.  **Step 2: FIND THE BEST STRATEGY (Premium Feature)**
-                * Open the **"🚀 Strategy Scanner"** at the bottom of the page.
+                * Open the **"Strategy Scanner"** at the bottom of the page.
                 * This "heatmap" tool tests all strategies across all pairs and timeframes at once.
             3.  **Step 3: ACTIVATE LIVE SIGNALS (Premium Feature)**
                 * Set your chosen parameters in the sidebar. The app will run in "live" mode, showing signals on the chart as they happen.
                 * Premium users will also receive an "ALERT SENT" in the sidebar.
 
             ### Feature Tiers: Free vs. Premium
-            **🎁 Free Tier (Your Current Plan):**
-            * ✅ **Economic News Calendar** (Real-time data from Investing.com)
-            * ✅ **Full Backtesting Engine**
-            * ✅ **All 6 Strategies** & All Timeframes
-            * 🔒 **Limited to EUR/USD** only.
+            **Free Tier (Your Current Plan):**
+            * Full Backtesting Engine
+            * All 6 Strategies & All Timeframes
+            * Limited to EUR/USD only.
 
-            **⭐ Premium Tier ($29.99/month):**
+            **Premium Tier ($29.99/month):**
             Upgrade for **$29.99/month** to unlock every feature:
-            * ✅ **Unlock All 10+ Currency Pairs**
-            * ✅ **🚀 Strategy Scanner**
-            * ✅ **Live Signal Alerts**
+            * Unlock All 10+ Currency Pairs
+            * Strategy Scanner
+            * Live Signal Alerts
             *(Note: Scanner speed is limited by the Twelve Data Free API plan)*
             """
         )
@@ -405,7 +391,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     
-    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') # Default is 100
+    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips')
     
     if sl_pips <= 0 or tp_pips <= 0: st.sidebar.error("SL and TP must be greater than 0."); st.stop()
     
@@ -419,10 +405,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.info(
         f"""
-        **🎁 Free Tier:**\n
+        **Free Tier:**\n
         Full backtesting on EUR/USD only.
 
-        **⭐ Upgrade to Premium ($29.99/mo):**\n
+        **Upgrade to Premium ($29.99/mo):**\n
         • Unlock all pairs\n
         • Unlock Strategy Scanner\n
         • Get Live Signal Alerts
@@ -438,7 +424,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.page = "profile"
         st.rerun()
     
-    # === HELPER FUNCTIONS (Alerts & Calendar) ===
+    # === HELPER FUNCTIONS ===
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval):
         if "TD_API_KEY" not in st.secrets:
@@ -468,7 +454,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- CALENDAR FUNCTION (WITH DEBUG PRINTING) ---
+    # --- FIXED CALENDAR FUNCTION ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
@@ -476,91 +462,69 @@ elif st.session_state.page == "app" and st.session_state.user:
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                # ForexFactory JSON API (free, live, unblocked)
-                url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-                response = requests.get(url, timeout=10)
+                response = requests.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", timeout=10)
                 data = response.json()
-                
                 events = []
-                # --- FIX: Replaced datetime.utcnow() ---
                 now = datetime.now(timezone.utc)
-                
-                for e in data:
-                    # Handle potential missing time, default to 00:00
-                    event_time_str = e.get("time", "00:00:00")
-                    if not event_time_str: event_time_str = "00:00:00"
-                    
-                    # --- FIX: Ensure date string is not None ---
-                    date_str = e.get("date")
-                    if not date_str:
-                        continue # Skip event if date is missing
 
-                    event_time = datetime.strptime(date_str + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
-                    
-                    # --- FIX: Make event_time timezone-aware for comparison ---
-                    event_time = event_time.replace(tzinfo=timezone.utc)
+                for e in data:
+                    date_str = e.get("date")
+                    time_str = e.get("time", "00:00:00")
+                    if not date_str or not time_str:
+                        continue
+                    try:
+                        event_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+                        event_time = event_time.replace(tzinfo=timezone.utc)
+                    except:
+                        continue
 
                     if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
                         continue
-                    
-                    actual = e.get("actual", "N/A")
-                    forecast = e.get("forecast", "N/A")
-                    previous = e.get("previous", "N/A")
+
+                    actual = e.get("actual") or "Pending"
+                    forecast = e.get("forecast") or "N/A"
+                    previous = e.get("previous") or "N/A"
                     is_past = event_time < now
-                    actual_display = actual if is_past and actual != "N/A" else "Pending"
-                    
-                    # Surprise logic
+                    actual_display = actual if is_past and actual != "Pending" else "Pending"
+
                     surprise = ""
-                    if is_past and actual != "N/A" and forecast != "N/A":
+                    if is_past and actual != "Pending" and forecast != "N/A":
                         try:
                             def to_num(v):
                                 v = str(v).strip().replace(',', '').replace('%', '')
                                 if v.endswith('K'): return float(v[:-1]) * 1000
                                 if v.endswith('M'): return float(v[:-1]) * 1000000
-                                if v == "" or v == "N/A": return float('nan') # Handle empty strings
                                 return float(v)
-                            
                             a, f = to_num(actual), to_num(forecast)
-                            
-                            if pd.isna(a) or pd.isna(f):
-                                surprise = "" # Can't compare if one is not a number
-                            elif a > f: 
-                                surprise = "Better than Expected"
-                            elif a < f: 
-                                surprise = "Worse than Expected"
-                            else: 
-                                surprise = "As Expected"
+                            surprise = "Better than Expected" if a > f else "Worse than Expected" if a < f else "As Expected"
                         except:
                             surprise = ""
-                    
+
+                    impact_map = {"high": "High", "medium": "Medium", "low": "Low"}
+                    impact = impact_map.get(e.get("impact", "").lower(), "Low")
+
                     events.append({
                         "date": event_time.strftime("%A, %b %d"),
                         "time": event_time.strftime("%H:%M"),
-                        "event": e.get("title", "Unknown Event"),
+                        "event": e.get("title", "Unknown"),
                         "country": e.get("country", "??"),
-                        "impact": e.get("impact", "Low").title(),
+                        "impact": impact,
                         "forecast": forecast,
                         "previous": previous,
                         "actual": actual_display,
-                        "surprise": surprise,
-                        "date_dt": event_time
+                        "surprise": surprise
                     })
-                
-                df = pd.DataFrame(events)
-                return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
-            
-            except Exception as e:
-                # --- THIS IS THE CRITICAL LINE ---
-                print(f"Error in get_free_calendar: {e}") 
-                # ---
-                # Fallback
-                return pd.DataFrame([
-                    {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
-                     "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
-                ])
-        # --- END OF REPLACED INNER FUNCTION ---
 
-        with st.spinner("Loading live economic calendar..."):
+                df = pd.DataFrame(events)
+                return df.sort_values("date") if not df.empty else pd.DataFrame()
+
+            except Exception as e:
+                return pd.DataFrame([{
+                    "date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls", "country": "US", "impact": "High",
+                    "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""
+                }])
+
+        with st.spinner("Loading live calendar..."):
             df = get_free_calendar()
 
         if df.empty:
@@ -585,33 +549,23 @@ elif st.session_state.page == "app" and st.session_state.user:
         .impact-high { background: #ffebee; color: #c62828; font-weight: bold; }
         .impact-medium { background: #fff3e0; color: #ef6c00; font-weight: bold; }
         .impact-low { background: #f3e5f5; color: #6a1b9a; }
-        .actual-better { background: #e8f5e8; color: #2e7d32; font-weight: bold; }
-        .actual-worse { background: #ffebee; color: #c62828; font-weight: bold; }
-        .actual-expected { background: #fff8e1; color: #ff8f00; font-weight: bold; }
+        .surprise-better { background: #e8f5e8; color: #2e7d32; font-weight: bold; }
+        .surprise-worse { background: #ffebee; color: #c62828; font-weight: bold; }
+        .surprise-expected { background: #fff8e1; color: #ff8f00; font-weight: bold; }
         </style>
         """, unsafe_allow_html=True)
 
         def style_row(row):
-            styles = [""] * len(row)
-            impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
-            impact_medium_css = "background: #fff3e0; color: #ef6c00; font-weight: bold;"
-            impact_low_css = "background: #f3e5f5; color: #6a1b9a;"
-            actual_better_css = "background: #e8f5e8; color: #2e7d32; font-weight: bold;"
-            actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
-            actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
-            
-            if row["impact"] == "High": styles[4] = impact_high_css
-            elif row["impact"] == "Medium": styles[4] = impact_medium_css
-            elif row["impact"] == "Low": styles[4] = impact_low_css
-            
-            if row["surprise"] == "Better than Expected": styles[8] = actual_better_css
-            elif row["surprise"] == "Worse than Expected": styles[8] = actual_worse_css
-            elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
-            
-            return styles
+            s = [""] * len(row)
+            if row["impact"] == "High": s[4] = 'class="impact-high"'
+            elif row["impact"] == "Medium": s[4] = 'class="impact-medium"'
+            elif row["impact"] == "Low": s[4] = 'class="impact-low"'
+            if row["surprise"] == "Better than Expected": s[8] = 'class="surprise-better"'
+            elif row["surprise"] == "Worse than Expected": s[8] = 'class="surprise-worse"'
+            elif row["surprise"] == "As Expected": s[8] = 'class="surprise-expected"'
+            return s
 
-        styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
-        
+        styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"').hide(axis="index")
         st.markdown(styled.to_html(), unsafe_allow_html=True)
 
         if st.button("Refresh Calendar"):
@@ -619,9 +573,8 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.rerun()
 
         st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
-    # --- END OF CALENDAR FUNCTION ---
 
-    # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
+    # === INDICATOR & STRATEGY LOGIC ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
@@ -661,7 +614,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         return df
 
-    # === (FIXED) BACKTESTING FUNCTION ===
+    # === BACKTESTING FUNCTION ===
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
         df = df_in.copy(); trades = []
         if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
@@ -737,7 +690,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
         st.subheader("Equity Curve")
         
-        resolved_df_key = 'resolved_trades_df' if 'resolved_trades_df' in results else 'resolved_trades_ _df'
+        resolved_df_key = 'resolved_trades_df'
         
         if resolved_df_key in results and not results[resolved_df_key].empty:
             equity_fig = go.Figure()
@@ -746,7 +699,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
-        # --- FIX: Replaced use_container_width ---
         st.dataframe(results['trade_df'], width='stretch')
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
@@ -788,7 +740,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig.update_yaxes(title_text="MACD", row=macd_row, col=1)
         fig.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=macd_row, col=1)
     
-    # --- CRASH FIX ---
     fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
@@ -799,12 +750,12 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
-    display_news_calendar() # <-- This now calls the NEW, upgraded function
+    display_news_calendar()
     st.markdown("---")
 
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
-        with st.expander("🚀 Strategy Scanner (Premium Feature)"):
+        with st.expander("Strategy Scanner (Premium Feature)"):
             st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
             
             all_strategies = [
@@ -821,7 +772,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -862,7 +813,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
                         
-                        # --- FIX: Replaced use_container_width ---
                         st.dataframe(
                             results_df.style
                                 .applymap(style_profit, subset=['Total Profit ($)'])
@@ -874,11 +824,11 @@ elif st.session_state.page == "app" and st.session_state.user:
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
     else:
-         st.info("The **🚀 Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
+         st.info("The **Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
 
     # === RISK DISCLAIMER ===
     st.markdown("---")
-    st.subheader("⚠️ Risk Disclaimer")
+    st.subheader("Risk Disclaimer")
     st.warning(
         """
         This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance. 
@@ -892,8 +842,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
 # === 6. Error handling for auth/db init failure ===
 elif not st.session_state.user:
-    st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
-    st.title("PipWizard 💹")
+    st.set_page_config(page_title="Error - PipWizard", page_icon="Warning", layout="centered")
+    st.title("PipWizard")
     st.error("Application failed to initialize.")
     st.warning("Could not connect to the authentication service.")
     st.info("This may be due to missing Streamlit Secrets or. Please contact the administrator.")
