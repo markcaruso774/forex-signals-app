@@ -398,7 +398,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
-    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
+    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     
@@ -471,12 +471,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                if "FINNHUB_KEY" not in st.secrets:
+                if "FINNHUB_API_KEY" not in st.secrets:
                     # This check is crucial
-                    st.error("Please add FINNHUB_KEY to your Streamlit secrets to load the calendar.")
+                    st.error("Please add FINNHUB_API_KEY to your Streamlit secrets to load the calendar.")
                     return pd.DataFrame()
                     
-                token = st.secrets["FINNHUB_KEY"]
+                token = st.secrets["FINNHUB_API_KEY"]
                 now = datetime.now(timezone.utc)
                 start_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
                 end_date = (now + timedelta(days=7)).strftime("%Y-%m-%d")
