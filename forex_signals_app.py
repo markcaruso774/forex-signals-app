@@ -421,7 +421,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
     if not is_premium:
-        if st.sidebar.button("Upgrade to Premium Now!", type="primary", `width='stretch'`, key="upgrade_button"):
+        if st.sidebar.button("Upgrade to Premium Now!", type="primary", use_container_width=True, key="upgrade_button"):
             st.session_state.page = "profile"
             st.rerun()
     st.sidebar.markdown("---")
