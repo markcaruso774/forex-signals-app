@@ -265,7 +265,11 @@ elif st.session_state.page == "profile":
 # === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
     st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
-
+    
+    # --- THIS IS THE NEW DEBUG LINE ---
+    st.write("Loaded Secret Keys:", st.secrets.keys())
+    # ---
+    
     # --- NEW: Check for Payment Callback ---
     query_params = st.query_params
     if "trxref" in query_params:
