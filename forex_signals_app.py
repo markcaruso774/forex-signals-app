@@ -459,121 +459,83 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- CALENDAR FUNCTION (WITH NEW FAILOVER LOGIC) ---
+    # --- CALENDAR FUNCTION (NEW: FINNHUB API) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
         @st.cache_data(ttl=300)
         def get_free_calendar():
-            data = []
-            source = ""
             try:
-                # --- START: New data fetching logic with failover ---
-                try:
-                    # ✅ Try EconoPy first (most reliable)
-                    url = "https://econopy.io/api/calendar?days=30"
-                    response = requests.get(url, timeout=10)
-                    response.raise_for_status() # Will raise an error for bad status (4xx or 5xx)
-                    data = response.json()
-                    source = "econopy" # Set flag
-                    if not data or len(data) < 3:
-                         raise Exception("EconoPy returned empty data")
-                    print("Using EconoPy for calendar") # Debug line
-
-                # ✅ Fallback: TradingEconomics guest API (always online)
-                except Exception as e:
-                    print(f"EconoPy failed: {e}. Falling back to TradingEconomics.")
-                    url = "https://api.tradingeconomics.com/calendar?c=guest:guest"
-                    response = requests.get(url, timeout=10)
-                    response.raise_for_status()
-                    data = response.json()
-                    source = "tradingeconomics" # Set flag
-                    if not data:
-                        raise Exception("TradingEconomics also returned empty data")
-                    print("Using TradingEconomics for calendar") # Debug line
-                # --- END: New data fetching logic ---
-
-                events = []
+                if "FINNHUB_KEY" not in st.secrets:
+                    # This check is crucial
+                    st.error("Please add FINNHUB_KEY to your Streamlit secrets to load the calendar.")
+                    return pd.DataFrame()
+                    
+                token = st.secrets["FINNHUB_KEY"]
                 now = datetime.now(timezone.utc)
+                start_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+                end_date = (now + timedelta(days=7)).strftime("%Y-%m-%d")
+                
+                url = f"https://finnhub.io/api/v1/calendar/economic?from={start_date}&to={end_date}&token={token}"
+                
+                response = requests.get(url, timeout=10)
+                response.raise_for_status() # Will error if key is bad or API is down
+                data = response.json().get("economicCalendar", [])
+                
+                if not data:
+                    return pd.DataFrame() # This will show "No events loaded"
+                    
+                events = []
+                
+                # Helper for robust number conversion
+                def to_num(v):
+                    if v is None: return float('nan')
+                    v = str(v).strip().replace(',', '').replace('%', '').replace('$', '')
+                    if v.endswith('K'): return float(v[:-1]) * 1000
+                    if v.endswith('M'): return float(v[:-1]) * 1000000
+                    if v.endswith('B'): return float(v[:-1]) * 1000000000
+                    if v == "" or v == "N/A": return float('nan')
+                    return float(v)
 
                 for e in data:
-                    # --- This is the new, conditional parsing logic ---
-                    if source == "econopy":
-                        # EconoPy parsing logic 
-                        event_time_str = e.get("date") 
-                        if not event_time_str: continue
-                        
-                        event_time = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
-                        
-                        event_name = e.get("event", "Unknown Event") # Using "event"
-                        country = e.get("country", "??")
-                        impact_str = e.get("impact", "Low") # Using "impact"
-                        forecast = e.get("forecast", "N/A")
-                        previous = e.get("previous", "N/A")
-                        actual = e.get("actual", "N/A")
+                    # Finnhub time is in seconds timestamp
+                    event_time = datetime.fromtimestamp(e.get("time"), tz=timezone.utc)
+                    
+                    # Filter for major currencies
+                    if e.get("country") not in ["US", "GB", "EU", "JP", "CA", "AU", "NZ", "CN"]:
+                        continue
 
-                    elif source == "tradingeconomics":
-                        # TradingEconomics parsing logic
-                        event_time_str = e.get("Date")
-                        if not event_time_str: continue
-
-                        event_time = datetime.fromisoformat(event_time_str).replace(tzinfo=timezone.utc) # Add UTC
-                        
-                        event_name = e.get("Event", "Unknown Event")
-                        country = e.get("Country", "??")
-                        
-                        # Convert TE importance
-                        impact_num = e.get("Importance", 1)
-                        if impact_num == 3: impact_str = "High"
-                        elif impact_num == 2: impact_str = "Medium"
-                        else: impact_str = "Low"
-                        
-                        forecast = e.get("Forecast", "N/A")
-                        previous = e.get("Previous", "N/A")
-                        actual = e.get("Actual", "N/A")
-                    # --- End of conditional parsing ---
-
-                    # --- Common logic (from old function) ---
-                    if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
-                         continue # Filter for the next 7 days
-
-                    is_past = event_time < now
-                    actual_display = actual if is_past and actual != "N/A" else "Pending"
+                    actual = e.get("actual")
+                    forecast = e.get("forecast")
+                    previous = e.get("prev")
+                    
+                    actual_display = actual if actual is not None else "Pending"
                     
                     surprise = ""
-                    if is_past and actual != "N/A" and forecast != "N/A":
-                        try:
-                            # Robust number parser
-                            def to_num(v):
-                                v = str(v).strip().replace(',', '').replace('%', '').replace('$', '')
-                                if v.endswith('K'): return float(v[:-1]) * 1000
-                                if v.endswith('M'): return float(v[:-1]) * 1000000
-                                if v.endswith('B'): return float(v[:-1]) * 1000000000
-                                if v == "" or v == "N/A": return float('nan')
-                                return float(v)
-                            
-                            a, f = to_num(actual), to_num(forecast)
-                            
-                            if pd.isna(a) or pd.isna(f):
-                                surprise = ""
-                            elif a > f: 
-                                surprise = "Better than Expected"
-                            elif a < f: 
-                                surprise = "Worse than Expected"
-                            else: 
-                                surprise = "As Expected"
-                        except:
-                            surprise = ""
+                    try:
+                        a, f = to_num(actual), to_num(forecast)
+                        if not (pd.isna(a) or pd.isna(f)):
+                            if a > f: surprise = "Better than Expected"
+                            elif a < f: surprise = "Worse than Expected"
+                            else: surprise = "As Expected"
+                    except:
+                        surprise = ""
                     
+                    # Map Finnhub impact 1,2,3 to Low,Medium,High
+                    impact_num = e.get("impact")
+                    if impact_num == 3: impact_str = "High"
+                    elif impact_num == 2: impact_str = "Medium"
+                    else: impact_str = "Low"
+
                     events.append({
                         "date": event_time.strftime("%A, %b %d"),
                         "time": event_time.strftime("%H:%M"),
-                        "event": event_name,
-                        "country": country,
-                        "impact": impact_str.title(),
-                        "forecast": forecast,
-                        "previous": previous,
+                        "event": e.get("event"),
+                        "country": e.get("country"),
+                        "impact": impact_str,
+                        "forecast": forecast if forecast is not None else "N/A",
+                        "previous": previous if previous is not None else "N/A",
                         "actual": actual_display,
                         "surprise": surprise,
                         "date_dt": event_time
@@ -583,8 +545,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
 
             except Exception as e:
-                # This is the FINAL fallback if both APIs fail or parsing fails
-                print(f"Error in get_free_calendar (outer): {e}") 
+                # This is the FINAL fallback
+                print(f"Error in get_free_calendar (Finnhub): {e}") 
                 return pd.DataFrame([
                     {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
                      "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
@@ -595,7 +557,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             df = get_free_calendar()
         
         if df.empty:
-            st.info("No events loaded.")
+            st.info("No economic events loaded for the next 7 days.") # Changed message
             if st.button("Refresh Calendar"):
                 st.cache_data.clear()
                 st.rerun()
@@ -607,6 +569,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.info(f"No events matching '{search}'.")
                 return
                 
+        # Your styling code is UNCHANGED
         st.markdown("""
         <style>
         .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
@@ -631,6 +594,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
             actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
             
+            # Column indices: 0:date, 1:time, 2:event, 3:country, 4:impact, 5:forecast, 6:previous, 7:actual, 8:surprise
             if row["impact"] == "High": styles[4] = impact_high_css
             elif row["impact"] == "Medium": styles[4] = impact_medium_css
             elif row["impact"] == "Low": styles[4] = impact_low_css
@@ -649,9 +613,9 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.cache_data.clear()
             st.rerun()
             
-        st.caption("Source: Live API (EconoPy / TradingEconomics) • Live Actuals • Times in UTC")
+        st.caption("Source: Finnhub.io • Live Actuals • Times in UTC")
     # --- END OF CALENDAR FUNCTION ---
-
+    
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
@@ -852,7 +816,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000,.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
