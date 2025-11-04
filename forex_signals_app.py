@@ -3,13 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, timezone # <-- ADDED timezone
+from datetime import datetime, timedelta, timezone 
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & NEW Calendar
+import time      # <-- Added for the new calendar function
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -459,111 +460,120 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- CALENDAR FUNCTION (NEW: FINNHUB API - US ONLY FIX) ---
+    # --- CALENDAR FUNCTION (FINAL ROBUST VERSION) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
 
-        @st.cache_data(ttl=300)
+        @st.cache_data(ttl=300, show_spinner=False)
         def get_free_calendar():
-            try:
-                if "FINNHUB_KEY" not in st.secrets:
-                    # This check is crucial
-                    st.error("Please add FINNHUB_KEY to your Streamlit secrets to load the calendar.")
-                    return pd.DataFrame()
+            # 1. PRIMARY: Official (with headers + cache buster)
+            # 2. BACKUP: CDN mirror
+            # 3. FINAL: GitHub mirror (always works)
+            urls = [
+                "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+                "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json",
+                "https://raw.githubusercontent.com/ranaroussi/forexfactory-calendar/master/ff_calendar_thisweek.json"
+            ]
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (compatible; PipWizard/1.0)",
+                "Accept": "application/json",
+                "Cache-Control": "no-cache"
+            }
+            
+            for i, url in enumerate(urls):
+                try:
+                    # Cache buster + delay between retries
+                    time.sleep(0.5 * i)
+                    params = {"_": int(time.time())}
+                    response = requests.get(url, headers=headers, params=params, timeout=10)
                     
-                token = st.secrets["FINNHUB_KEY"]
-                now = datetime.now(timezone.utc)
-                start_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-                end_date = (now + timedelta(days=7)).strftime("%Y-%m-%d")
-                
-                # --- API CALL IS THE SAME ---
-                url = f"https://finnhub.io/api/v1/calendar/economic?from={start_date}&to={end_date}&token={token}"
-                
-                response = requests.get(url, timeout=10)
-                response.raise_for_status() # Will error if key is bad or API is down
-                data = response.json().get("economicCalendar", [])
-                
-                if not data:
-                    return pd.DataFrame() # This will show "No events loaded"
-                    
-                events = []
-                
-                # Helper for robust number conversion
-                def to_num(v):
-                    if v is None: return float('nan')
-                    v = str(v).strip().replace(',', '').replace('%', '').replace('$', '')
-                    if v.endswith('K'): return float(v[:-1]) * 1000
-                    if v.endswith('M'): return float(v[:-1]) * 1000000
-                    if v.endswith('B'): return float(v[:-1]) * 1000000000
-                    if v == "" or v == "N/A": return float('nan')
-                    return float(v)
-
-                for e in data:
-                    # Finnhub time is in seconds timestamp
-                    event_time_unix = e.get("time")
-                    if event_time_unix is None:
-                        continue
-                    event_time = datetime.fromtimestamp(event_time_unix, tz=timezone.utc)
-                    
-                    # --- THIS IS THE FIX ---
-                    # The free plan only allows US data. This filter is required.
-                    if e.get("country") != "US":
-                        continue
-                    # --- END OF FIX ---
-
-                    actual = e.get("actual")
-                    forecast = e.get("forecast")
-                    previous = e.get("prev")
-                    
-                    actual_display = actual if actual is not None else "Pending"
-                    
-                    surprise = ""
-                    try:
-                        a, f = to_num(actual), to_num(forecast)
-                        if not (pd.isna(a) or pd.isna(f)):
-                            if a > f: surprise = "Better than Expected"
-                            elif a < f: surprise = "Worse than Expected"
-                            else: surprise = "As Expected"
-                    except:
-                        surprise = ""
-                    
-                    # Map Finnhub impact 1,2,3 to Low,Medium,High
-                    impact_num = e.get("impact")
-                    if impact_num == 3: impact_str = "High"
-                    elif impact_num == 2: impact_str = "Medium"
-                    else: impact_str = "Low"
-
-                    events.append({
-                        "date": event_time.strftime("%A, %b %d"),
-                        "time": event_time.strftime("%H:%M"),
-                        "event": e.get("event"),
-                        "country": e.get("country"),
-                        "impact": impact_str,
-                        "forecast": forecast if forecast is not None else "N/A",
-                        "previous": previous if previous is not None else "N/A",
-                        "actual": actual_display,
-                        "surprise": surprise,
-                        "date_dt": event_time
-                    })
-                
-                df = pd.DataFrame(events)
-                return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
-
-            except Exception as e:
-                # --- THIS WILL SHOW THE ERROR IN YOUR APP ---
-                st.error(f"Calendar Error: {e}") 
-                return pd.DataFrame([
-                    {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
-                     "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
-                ])
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data and len(data) > 0:
+                            # === PARSE EVENTS (same logic) ===
+                            events = []
+                            now = datetime.now(timezone.utc)
+                            for e in data:
+                                try:
+                                    dt_str = f"{e.get('date', '')} {e.get('time', '00:00:00')}"
+                                    if not dt_str.strip() or "1970" in dt_str: continue
+                                    naive_dt = datetime.strptime(dt_str.strip(), "%Y-%m-%d %H:%M:%S")
+                                    event_time = naive_dt.replace(tzinfo=timezone.utc)
+                                    
+                                    if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
+                                        continue
+                                    
+                                    actual = e.get("actual") or "N/A"
+                                    forecast = e.get("forecast") or "N/A"
+                                    previous = e.get("previous") or "N/A"
+                                    is_past = event_time < now
+                                    actual_display = actual if is_past and actual != "N/A" else "Pending"
+                                    
+                                    surprise = ""
+                                    if is_past and actual != "N/A" and forecast != "N/A":
+                                        try:
+                                            def to_num(v):
+                                                v = str(v).strip().replace(',', '').replace('%', '')
+                                                if v.endswith('K'): return float(v[:-1]) * 1000
+                                                if v.endswith('M'): return float(v[:-1]) * 1000000
+                                                return float(v) if v and v != "N/A" and v is not None else float('nan')
+                                            a, f = to_num(actual), to_num(forecast)
+                                            if not (pd.isna(a) or pd.isna(f)):
+                                                surprise = "Better than Expected" if a > f else "Worse than Expected" if a < f else "As Expected"
+                                        except:
+                                            pass
+                                    
+                                    events.append({
+                                        "date": event_time.strftime("%A, %b %d"),
+                                        "time": event_time.strftime("%H:%M"),
+                                        "event": e.get("title", "Unknown"),
+                                        "country": e.get("country", "??"),
+                                        "impact": e.get("impact", "low").title(),
+                                        "forecast": forecast,
+                                        "previous": previous,
+                                        "actual": actual_display,
+                                        "surprise": surprise,
+                                        "date_dt": event_time
+                                    })
+                                except:
+                                    continue
+                            
+                            df = pd.DataFrame(events)
+                            if not df.empty:
+                                return df.sort_values("date_dt").drop(columns="date_dt")
+                                
+                    elif response.status_code == 429:
+                        # This is the "Too Many Requests" error
+                        st.toast(f"Calendar server is busy, trying backup...")
+                        continue # Try the next URL
+                except Exception as e:
+                    # This will catch timeouts or other connection errors
+                    st.toast(f"Calendar source failed: {e}. Trying backup...")
+                    continue # Try the next URL
+            
+            # FINAL FALLBACK (if all 3 URLs fail)
+            st.error("All live calendar sources are busy or down. Displaying static fallback.")
+            return pd.DataFrame([{
+                "date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US",
+                "impact": "High", "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""
+            }])
         # --- END OF REPLACED INNER FUNCTION ---
         
         with st.spinner("Loading live economic calendar..."):
             df = get_free_calendar()
         
-        if df.empty:
-            st.info("No economic events loaded for the next 7 days.") # Changed message
+        # Check if the dataframe is empty OR only contains the fallback
+        is_fallback = (len(df) == 1 and df.iloc[0]["event"] == "Nonfarm Payrolls (Fallback)")
+        
+        if df.empty or is_fallback:
+            if df.empty:
+                st.info("No economic events loaded for the next 7 days.")
+            else:
+                # If it's the fallback, display it but with a warning
+                st.markdown(df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"').to_html(), unsafe_allow_html=True)
+            
             if st.button("Refresh Calendar"):
                 st.cache_data.clear()
                 st.rerun()
@@ -619,7 +629,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.cache_data.clear()
             st.rerun()
             
-        st.caption("Source: Finnhub.io • Live Actuals • Times in UTC")
+        st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
     # --- END OF CALENDAR FUNCTION ---
     
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
