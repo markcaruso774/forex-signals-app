@@ -543,8 +543,9 @@ elif st.session_state.page == "app" and st.session_state.user:
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
 
             except Exception as e:
-                # This is the FINAL fallback
-                print(f"Error in get_free_calendar (nfs.faireconomy): {e}") 
+                # --- THIS IS THE NEW DEBUG LINE ---
+                st.error(f"Calendar Error: {e}") 
+                # ---
                 return pd.DataFrame([
                     {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
                      "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
