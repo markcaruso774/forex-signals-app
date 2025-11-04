@@ -459,7 +459,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- CALENDAR FUNCTION (REVERTED TO nfs.faireconomy.media WITH FIXES) ---
+    # --- CALENDAR FUNCTION (NEW: FINNHUB API - US ONLY FIX) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
@@ -467,73 +467,81 @@ elif st.session_state.page == "app" and st.session_state.user:
         @st.cache_data(ttl=300)
         def get_free_calendar():
             try:
-                # Use the API you confirmed is working
-                url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+                if "FINNHUB_KEY" not in st.secrets:
+                    # This check is crucial
+                    st.error("Please add FINNHUB_KEY to your Streamlit secrets to load the calendar.")
+                    return pd.DataFrame()
+                    
+                token = st.secrets["FINNHUB_KEY"]
+                now = datetime.now(timezone.utc)
+                start_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+                end_date = (now + timedelta(days=7)).strftime("%Y-%m-%d")
+                
+                # --- API CALL IS THE SAME ---
+                url = f"https://finnhub.io/api/v1/calendar/economic?from={start_date}&to={end_date}&token={token}"
+                
                 response = requests.get(url, timeout=10)
-                response.raise_for_status() # Check for errors
-                data = response.json()
+                response.raise_for_status() # Will error if key is bad or API is down
+                data = response.json().get("economicCalendar", [])
                 
                 if not data:
-                    return pd.DataFrame() # Return empty if API gives empty list
-
-                events = []
-                now = datetime.now(timezone.utc) # Timezone-AWARE
-                
-                for e in data:
-                    date_str = e.get("date")
-                    time_str = e.get("time", "00:00:00") # Default time if missing
-                    if not date_str or not time_str:
-                        continue # Skip if no date or time
-
-                    # CRITICAL FIX: Create a timezone-AWARE datetime object
-                    try:
-                        # Combine date and time
-                        dt_str = f"{date_str} {time_str}"
-                        # Create a NAIVE datetime first
-                        naive_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
-                        # Make it AWARE by setting its timezone to UTC
-                        event_time = naive_dt.replace(tzinfo=timezone.utc)
-                    except ValueError:
-                        continue # Skip if date/time format is wrong
-
-                    # Filter for the next 7 days
-                    if event_time < (now - timedelta(days=1)) or event_time > (now + timedelta(days=7)):
-                        continue
+                    return pd.DataFrame() # This will show "No events loaded"
                     
-                    # --- Passed all filters, now parse data ---
-                    actual = e.get("actual", "N/A")
-                    forecast = e.get("forecast", "N/A")
-                    previous = e.get("previous", "N/A")
-                    is_past = event_time < now
-                    actual_display = actual if is_past and actual != "N/A" else "Pending"
+                events = []
+                
+                # Helper for robust number conversion
+                def to_num(v):
+                    if v is None: return float('nan')
+                    v = str(v).strip().replace(',', '').replace('%', '').replace('$', '')
+                    if v.endswith('K'): return float(v[:-1]) * 1000
+                    if v.endswith('M'): return float(v[:-1]) * 1000000
+                    if v.endswith('B'): return float(v[:-1]) * 1000000000
+                    if v == "" or v == "N/A": return float('nan')
+                    return float(v)
+
+                for e in data:
+                    # Finnhub time is in seconds timestamp
+                    event_time_unix = e.get("time")
+                    if event_time_unix is None:
+                        continue
+                    event_time = datetime.fromtimestamp(event_time_unix, tz=timezone.utc)
+                    
+                    # --- THIS IS THE FIX ---
+                    # The free plan only allows US data. This filter is required.
+                    if e.get("country") != "US":
+                        continue
+                    # --- END OF FIX ---
+
+                    actual = e.get("actual")
+                    forecast = e.get("forecast")
+                    previous = e.get("prev")
+                    
+                    actual_display = actual if actual is not None else "Pending"
                     
                     surprise = ""
-                    if is_past and actual != "N/A" and forecast != "N/A":
-                        try:
-                            def to_num(v):
-                                v = str(v).strip().replace(',', '').replace('%', '')
-                                if v.endswith('K'): return float(v[:-1]) * 1000
-                                if v.endswith('M'): return float(v[:-1]) * 1000000
-                                if v == "" or v == "N/A" or v is None: return float('nan')
-                                return float(v)
-                            
-                            a, f = to_num(actual), to_num(forecast)
-                            
-                            if not (pd.isna(a) or pd.isna(f)):
-                                if a > f: surprise = "Better than Expected"
-                                elif a < f: surprise = "Worse than Expected"
-                                else: surprise = "As Expected"
-                        except:
-                            surprise = "" # Fail silently on parsing
+                    try:
+                        a, f = to_num(actual), to_num(forecast)
+                        if not (pd.isna(a) or pd.isna(f)):
+                            if a > f: surprise = "Better than Expected"
+                            elif a < f: surprise = "Worse than Expected"
+                            else: surprise = "As Expected"
+                    except:
+                        surprise = ""
                     
+                    # Map Finnhub impact 1,2,3 to Low,Medium,High
+                    impact_num = e.get("impact")
+                    if impact_num == 3: impact_str = "High"
+                    elif impact_num == 2: impact_str = "Medium"
+                    else: impact_str = "Low"
+
                     events.append({
                         "date": event_time.strftime("%A, %b %d"),
                         "time": event_time.strftime("%H:%M"),
-                        "event": e.get("title", "Unknown Event"),
-                        "country": e.get("country", "??"),
-                        "impact": e.get("impact", "Low").title(),
-                        "forecast": forecast,
-                        "previous": previous,
+                        "event": e.get("event"),
+                        "country": e.get("country"),
+                        "impact": impact_str,
+                        "forecast": forecast if forecast is not None else "N/A",
+                        "previous": previous if previous is not None else "N/A",
                         "actual": actual_display,
                         "surprise": surprise,
                         "date_dt": event_time
@@ -543,9 +551,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                 return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
 
             except Exception as e:
-                # --- THIS IS THE NEW DEBUG LINE ---
+                # --- THIS WILL SHOW THE ERROR IN YOUR APP ---
                 st.error(f"Calendar Error: {e}") 
-                # ---
                 return pd.DataFrame([
                     {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High", 
                      "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
@@ -612,7 +619,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.cache_data.clear()
             st.rerun()
             
-        st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
+        st.caption("Source: Finnhub.io • Live Actuals • Times in UTC")
     # --- END OF CALENDAR FUNCTION ---
     
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
