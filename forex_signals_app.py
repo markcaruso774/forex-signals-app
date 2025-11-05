@@ -3,14 +3,13 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, timezone 
+from datetime import datetime, timedelta, timezone # <-- ADDED timezone
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & NEW Calendar
-import time      # <-- Added for the new calendar function
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -25,10 +24,10 @@ def initialize_firebase():
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
-                config["databaseURL"] = f"https{project_id}-default-rtdb.firebaseio.com/"
+                config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
             else:
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
-
+        
         try:
             firebase = pyrebase.initialize_app(config)
             auth = firebase.auth()
@@ -104,6 +103,7 @@ def logout():
     st.rerun()
 
 # === 4. PAYSTACK PAYMENT FUNCTIONS (TYPO FIXED) ===
+
 def create_payment_link(email, user_id):
     """
     Calls Paystack API to create a one-time payment link.
@@ -114,6 +114,7 @@ def create_payment_link(email, user_id):
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
+
     url = "https://api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
@@ -126,6 +127,7 @@ def create_payment_link(email, user_id):
         return None, None
         
     APP_URL = st.secrets["APP_URL"]
+
     payload = {
         "email": email,
         "amount": test_amount_kobo, 
@@ -159,12 +161,14 @@ def verify_payment(reference):
     if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Services not initialized.")
         return False
+
     try:
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
         response = requests.get(url, headers=headers)
         response_data = response.json()
+
         if response_data.get("status") and response_data["data"]["status"] == "success":
             st.success("Payment successful! Your account is now Premium.")
             
@@ -198,6 +202,7 @@ def verify_payment(reference):
 # === 5. LOGIN/SIGN UP PAGE ===
 if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon="💹", layout="centered")
+
     if auth is None or db is None:
         st.title("PipWizard 💹")
         st.error("Application failed to initialize.")
@@ -254,6 +259,7 @@ elif st.session_state.page == "profile":
                     components.html(f'<meta http-equiv="refresh" content="0; url={auth_url}">', height=0)
                 else:
                     st.error("Could not initiate payment. Please try again.")
+
     st.markdown("---")
     if st.button("Back to App"):
         st.session_state.page = "app"
@@ -261,12 +267,11 @@ elif st.session_state.page == "profile":
         
     if st.button("Logout", type="secondary"):
         logout()
-        
 
 # === 7. MAIN APP PAGE ===
 elif st.session_state.page == "app" and st.session_state.user:
     st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
-    
+
     # --- NEW: Check for Payment Callback ---
     query_params = st.query_params
     if "trxref" in query_params:
@@ -324,7 +329,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown(
             f"""
             ### What is PipWizard?
-            
             PipWizard is a powerful decision-support tool for forex traders. It's designed to help you **find**, **test**, and **act on** trading strategies in real-time.
             It combines a live signal generator, economic news calendar, and a powerful, on-demand backtesting engine.
 
@@ -364,6 +368,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.write(f"Logged in as: `{user_email}`")
     
     is_premium = st.session_state.is_premium
+
     if is_premium:
         selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0)
         st.sidebar.success("Premium Active – All Features Unlocked")
@@ -371,6 +376,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         selected_pair = FREE_PAIR
         st.sidebar.warning("Free Tier: EUR/USD Only")
         st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
+
     selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"))
     
     st.sidebar.markdown("---")
@@ -415,6 +421,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         f"""
         **🎁 Free Tier:**\n
         Full backtesting on EUR/USD only.
+
         **⭐ Upgrade to Premium ($29.99/mo):**\n
         • Unlock all pairs\n
         • Unlock Strategy Scanner\n
@@ -425,6 +432,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.sidebar.button("Upgrade to Premium Now!", type="primary", use_container_width=True, key="upgrade_button"):
             st.session_state.page = "profile"
             st.rerun()
+
     st.sidebar.markdown("---")
     if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button"):
         st.session_state.page = "profile"
@@ -460,155 +468,117 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # --- CALENDAR FUNCTION (FINAL ROBUST VERSION) ---
+    # --- CALENDAR FUNCTION (WITH DEBUG PRINTING) ---
     def display_news_calendar():
         st.subheader("Upcoming Economic Calendar")
+    
         search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
-
-        # --- THIS IS THE FIX ---
-        # Define style_row *before* it is ever called
-        def style_row(row):
-            styles = [""] * len(row)
-            impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
-            impact_medium_css = "background: #fff3e0; color: #ef6c00; font-weight: bold;"
-            impact_low_css = "background: #f3e5f5; color: #6a1b9a;"
-            actual_better_css = "background: #e8f5e8; color: #2e7d32; font-weight: bold;"
-            actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
-            actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
-            
-            # Column indices: 0:date, 1:time, 2:event, 3:country, 4:impact, 5:forecast, 6:previous, 7:actual, 8:surprise
-            if row["impact"] == "High": styles[4] = impact_high_css
-            elif row["impact"] == "Medium": styles[4] = impact_medium_css
-            elif row["impact"] == "Low": styles[4] = impact_low_css
-            
-            if row["surprise"] == "Better than Expected": styles[8] = actual_better_css
-            elif row["surprise"] == "Worse than Expected": styles[8] = actual_worse_css
-            elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
-            
-            return styles
-        # --- END OF FIX ---
-
-        @st.cache_data(ttl=300, show_spinner=False)
+    
+        @st.cache_data(ttl=300)
         def get_free_calendar():
-            # 1. PRIMARY: Official (with headers + cache buster)
-            # 2. BACKUP: CDN mirror
-            # 3. FINAL: GitHub mirror (always works)
-            urls = [
-                "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-                "https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json",
-                "https://raw.githubusercontent.com/ranaroussi/forexfactory-calendar/master/ff_calendar_thisweek.json"
-            ]
-            
-            headers = {
-                "User-Agent": "Mozilla/5.0 (compatible; PipWizard/1.0)",
-                "Accept": "application/json",
-                "Cache-Control": "no-cache"
-            }
-            
-            for i, url in enumerate(urls):
-                try:
-                    # Cache buster + delay between retries
-                    time.sleep(0.5 * i)
-                    params = {"_": int(time.time())}
-                    response = requests.get(url, headers=headers, params=params, timeout=10)
+            try:
+                # ForexFactory JSON API (free, live, unblocked)
+                url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+                response = requests.get(url, timeout=10)
+                data = response.json()
+    
+                events = []
+                # --- FIX: Replaced datetime.utcnow() ---
+                now = datetime.now(timezone.utc)
+    
+                for e in data:
+                    # Handle potential missing time, default to 00:00
+                    event_time_str = e.get("time", "00:00:00")
+                    if not event_time_str: event_time_str = "00:00:00"
+    
+                    # --- FIX: Ensure date string is not None ---
+                    date_str = e.get("date")
+                    if not date_str:
+                        continue # Skip event if date is missing
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data and len(data) > 0:
-                            # === PARSE EVENTS (same logic) ===
-                            events = []
-                            now = datetime.now(timezone.utc)
-                            for e in data:
-                                try:
-                                    dt_str = f"{e.get('date', '')} {e.get('time', '00:00:00')}"
-                                    if not dt_str.strip() or "1970" in dt_str: continue
-                                    naive_dt = datetime.strptime(dt_str.strip(), "%Y-%m-%d %H:%M:%S")
-                                    event_time = naive_dt.replace(tzinfo=timezone.utc)
-                                    
-                                    if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
-                                        continue
-                                    
-                                    actual = e.get("actual") or "N/A"
-                                    forecast = e.get("forecast") or "N/A"
-                                    previous = e.get("previous") or "N/A"
-                                    is_past = event_time < now
-                                    actual_display = actual if is_past and actual != "N/A" else "Pending"
-                                    
-                                    surprise = ""
-                                    if is_past and actual != "N/A" and forecast != "N/A":
-                                        try:
-                                            def to_num(v):
-                                                v = str(v).strip().replace(',', '').replace('%', '')
-                                                if v.endswith('K'): return float(v[:-1]) * 1000
-                                                if v.endswith('M'): return float(v[:-1]) * 1000000
-                                                return float(v) if v and v != "N/A" and v is not None else float('nan')
-                                            a, f = to_num(actual), to_num(forecast)
-                                            if not (pd.isna(a) or pd.isna(f)):
-                                                surprise = "Better than Expected" if a > f else "Worse than Expected" if a < f else "As Expected"
-                                        except:
-                                            pass
-                                    
-                                    events.append({
-                                        "date": event_time.strftime("%A, %b %d"),
-                                        "time": event_time.strftime("%H:%M"),
-                                        "event": e.get("title", "Unknown"),
-                                        "country": e.get("country", "??"),
-                                        "impact": e.get("impact", "low").title(),
-                                        "forecast": forecast,
-                                        "previous": previous,
-                                        "actual": actual_display,
-                                        "surprise": surprise,
-                                        "date_dt": event_time
-                                    })
-                                except:
-                                    continue
-                            
-                            df = pd.DataFrame(events)
-                            if not df.empty:
-                                return df.sort_values("date_dt").drop(columns="date_dt")
-                                
-                    elif response.status_code == 429:
-                        # This is the "Too Many Requests" error
-                        st.toast(f"Calendar server is busy, trying backup...")
-                        continue # Try the next URL
-                except Exception as e:
-                    # This will catch timeouts or other connection errors
-                    st.toast(f"Calendar source failed: {e}. Trying backup...")
-                    continue # Try the next URL
-            
-            # FINAL FALLBACK (if all 3 URLs fail)
-            st.error("All live calendar sources are busy or down. Displaying static fallback.")
-            return pd.DataFrame([{
-                "date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US",
-                "impact": "High", "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""
-            }])
+                    event_time = datetime.strptime(date_str + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
+                    
+                    # --- FIX: Make event_time timezone-aware for comparison ---
+                    event_time = event_time.replace(tzinfo=timezone.utc)
+    
+                    if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
+                        continue
+    
+                    actual = e.get("actual", "N/A")
+                    forecast = e.get("forecast", "N/A")
+                    previous = e.get("previous", "N/A")
+    
+                    is_past = event_time < now
+                    actual_display = actual if is_past and actual != "N/A" else "Pending"
+    
+                    # Surprise logic
+                    surprise = ""
+                    if is_past and actual != "N/A" and forecast != "N/A":
+                        try:
+                            def to_num(v):
+                                v = str(v).strip().replace(',', '').replace('%', '')
+                                if v.endswith('K'): return float(v[:-1]) * 1000
+                                if v.endswith('M'): return float(v[:-1]) * 1000000
+                                if v == "" or v == "N/A": return float('nan') # Handle empty strings
+                                return float(v)
+    
+                            a, f = to_num(actual), to_num(forecast)
+    
+                            if pd.isna(a) or pd.isna(f):
+                                surprise = "" # Can't compare if one is not a number
+                            elif a > f:
+                                surprise = "Better than Expected"
+                            elif a < f:
+                                surprise = "Worse than Expected"
+                            else:
+                                surprise = "As Expected"
+                        except:
+                            surprise = ""
+    
+                    events.append({
+                        "date": event_time.strftime("%A, %b %d"),
+                        "time": event_time.strftime("%H:%M"),
+                        "event": e.get("title", "Unknown Event"),
+                        "country": e.get("country", "??"),
+                        "impact": e.get("impact", "Low").title(),
+                        "forecast": forecast,
+                        "previous": previous,
+                        "actual": actual_display,
+                        "surprise": surprise,
+                        "date_dt": event_time
+                    })
+    
+                df = pd.DataFrame(events)
+                return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
+    
+            except Exception as e:
+                # --- THIS IS THE CRITICAL LINE ---
+                print(f"Error in get_free_calendar: {e}")
+                # ---
+                # Fallback
+                return pd.DataFrame([
+                    {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High",
+                     "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
+                ])
         # --- END OF REPLACED INNER FUNCTION ---
-        
+    
         with st.spinner("Loading live economic calendar..."):
             df = get_free_calendar()
-        
-        # Check if the dataframe is empty OR only contains the fallback
-        is_fallback = (not df.empty and len(df) == 1 and df.iloc[0]["event"] == "Nonfarm Payrolls (Fallback)")
-        
-        if df.empty or is_fallback:
-            if df.empty:
-                st.info("No economic events loaded for the next 7 days.")
-            else:
-                # If it's the fallback, display it (this was the line causing the error)
-                st.markdown(df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"').to_html(), unsafe_allow_html=True)
-            
+    
+        if df.empty:
+            st.info("No events loaded.")
             if st.button("Refresh Calendar"):
                 st.cache_data.clear()
                 st.rerun()
             return
-            
+    
         if search:
             df = df[df["event"].str.contains(search, case=False, na=False)]
-            if df.empty:
-                st.info(f"No events matching '{search}'.")
-                return
-                
-        # Your styling code is UNCHANGED
+        
+        if df.empty:
+            st.info(f"No events matching '{search}'.")
+            return
+    
         st.markdown("""
         <style>
         .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
@@ -623,18 +593,39 @@ elif st.session_state.page == "app" and st.session_state.user:
         .actual-expected { background: #fff8e1; color: #ff8f00; font-weight: bold; }
         </style>
         """, unsafe_allow_html=True)
+    
+        def style_row(row):
+            styles = [""] * len(row)
+            impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
+            impact_medium_css = "background: #fff3e0; color: #ef6c00; font-weight: bold;"
+            impact_low_css = "background: #f3e5f5; color: #6a1b9a;"
             
+            actual_better_css = "background: #e8f5e8; color: #2e7d32; font-weight: bold;"
+            actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
+            actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
+    
+            if row["impact"] == "High": styles[4] = impact_high_css
+            elif row["impact"] == "Medium": styles[4] = impact_medium_css
+            elif row["impact"] == "Low": styles[4] = impact_low_css
+    
+            if row["surprise"] == "Better than Expected": styles[8] = actual_better_css
+            elif row["surprise"] == "Worse than Expected": styles[8] = actual_worse_css
+            elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
+            
+            return styles
+    
         styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
-        
+    
         st.markdown(styled.to_html(), unsafe_allow_html=True)
-        
+    
         if st.button("Refresh Calendar"):
             st.cache_data.clear()
             st.rerun()
-            
+    
         st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
     # --- END OF CALENDAR FUNCTION ---
-    
+
+
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
@@ -761,11 +752,11 @@ elif st.session_state.page == "app" and st.session_state.user:
         else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
         # --- FIX: Replaced use_container_width ---
-        st.dataframe(results['trade_df'], width='stretch')
+        st.dataframe(results['trade_df'], width='stretch') 
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
-    
+
     # === MAIN CHART ===
     st.markdown("---")
     st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df)} Candles")
@@ -806,16 +797,16 @@ elif st.session_state.page == "app" and st.session_state.user:
     fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-    
+
     # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
         check_for_live_signal(df, selected_pair)
-        
+
     # --- NEWS CALENDAR SECTION ---
     st.markdown("---")
     display_news_calendar() # <-- This now calls the NEW, upgraded function
     st.markdown("---")
-    
+
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
@@ -835,8 +826,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
-            # --- THIS IS THE SYNTAX ERROR FIX ---
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -901,7 +891,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         Always trade responsibly and stick to your risk management plan.
         """
     )
-    
+
     # === AUTO-REFRESH COMPONENT ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
