@@ -3,13 +3,13 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, timezone # <-- ADDED timezone
+from datetime import datetime, timedelta, timezone 
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
-import requests  # For Paystack & NEW Calendar
+import requests  # For Paystack & Calendar
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -103,7 +103,6 @@ def logout():
     st.rerun()
 
 # === 4. PAYSTACK PAYMENT FUNCTIONS (TYPO FIXED) ===
-
 def create_payment_link(email, user_id):
     """
     Calls Paystack API to create a one-time payment link.
@@ -330,7 +329,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             f"""
             ### What is PipWizard?
             PipWizard is a powerful decision-support tool for forex traders. It's designed to help you **find**, **test**, and **act on** trading strategies in real-time.
-            It combines a live signal generator, economic news calendar, and a powerful, on-demand backtesting engine.
+            It combines a live signal generator and a powerful, on-demand backtesting engine.
 
             ### How to Use the App
             1.  **Step 1: TEST A STRATEGY (The "Main Backtest")**
@@ -345,7 +344,6 @@ elif st.session_state.page == "app" and st.session_state.user:
 
             ### Feature Tiers: Free vs. Premium
             **🎁 Free Tier (Your Current Plan):**
-            * ✅ **Economic News Calendar** (Real-time data from Investing.com)
             * ✅ **Full Backtesting Engine**
             * ✅ **All 6 Strategies** & All Timeframes
             * 🔒 **Limited to EUR/USD** only.
@@ -401,7 +399,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
-    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
+    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     
@@ -438,7 +436,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.page = "profile"
         st.rerun()
     
-    # === HELPER FUNCTIONS (Alerts & Calendar) ===
+    # === HELPER FUNCTIONS (Alerts) ===
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval):
         if "TD_API_KEY" not in st.secrets:
@@ -467,164 +465,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.session_state.last_alert_time = latest_bar.name
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
-
-    # --- CALENDAR FUNCTION (WITH DEBUG PRINTING) ---
-    def display_news_calendar():
-        st.subheader("Upcoming Economic Calendar")
-    
-        search = st.text_input("Search events", placeholder="e.g., NFP, PMI, CPI", key="calendar_search")
-    
-        @st.cache_data(ttl=300)
-        def get_free_calendar():
-            try:
-                # ForexFactory JSON API (free, live, unblocked)
-                url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-                response = requests.get(url, timeout=10)
-                data = response.json()
-    
-                events = []
-                # --- FIX: Replaced datetime.utcnow() ---
-                now = datetime.now(timezone.utc)
-    
-                for e in data:
-                    # Handle potential missing time, default to 00:00
-                    event_time_str = e.get("time", "00:00:00")
-                    if not event_time_str: event_time_str = "00:00:00"
-    
-                    # --- FIX: Ensure date string is not None ---
-                    date_str = e.get("date")
-                    if not date_str:
-                        continue # Skip event if date is missing
-                    
-                    event_time = datetime.strptime(date_str + " " + event_time_str, "%Y-%m-%d %H:%M:%S")
-                    
-                    # --- FIX: Make event_time timezone-aware for comparison ---
-                    event_time = event_time.replace(tzinfo=timezone.utc)
-    
-                    if event_time < now - timedelta(days=1) or event_time > now + timedelta(days=7):
-                        continue
-    
-                    actual = e.get("actual", "N/A")
-                    forecast = e.get("forecast", "N/A")
-                    previous = e.get("previous", "N/A")
-    
-                    is_past = event_time < now
-                    actual_display = actual if is_past and actual != "N/A" else "Pending"
-    
-                    # Surprise logic
-                    surprise = ""
-                    if is_past and actual != "N/A" and forecast != "N/A":
-                        try:
-                            def to_num(v):
-                                v = str(v).strip().replace(',', '').replace('%', '')
-                                if v.endswith('K'): return float(v[:-1]) * 1000
-                                if v.endswith('M'): return float(v[:-1]) * 1000000
-                                if v == "" or v == "N/A": return float('nan') # Handle empty strings
-                                return float(v)
-    
-                            a, f = to_num(actual), to_num(forecast)
-    
-                            if pd.isna(a) or pd.isna(f):
-                                surprise = "" # Can't compare if one is not a number
-                            elif a > f:
-                                surprise = "Better than Expected"
-                            elif a < f:
-                                surprise = "Worse than Expected"
-                            else:
-                                surprise = "As Expected"
-                        except:
-                            surprise = ""
-    
-                    events.append({
-                        "date": event_time.strftime("%A, %b %d"),
-                        "time": event_time.strftime("%H:%M"),
-                        "event": e.get("title", "Unknown Event"),
-                        "country": e.get("country", "??"),
-                        "impact": e.get("impact", "Low").title(),
-                        "forecast": forecast,
-                        "previous": previous,
-                        "actual": actual_display,
-                        "surprise": surprise,
-                        "date_dt": event_time
-                    })
-    
-                df = pd.DataFrame(events)
-                return df.sort_values("date_dt").drop(columns="date_dt") if not df.empty else pd.DataFrame()
-    
-            except Exception as e:
-                # --- THIS IS THE CRITICAL LINE ---
-                print(f"Error in get_free_calendar: {e}")
-                # ---
-                # Fallback
-                return pd.DataFrame([
-                    {"date": "Friday, Nov 08", "time": "13:30", "event": "Nonfarm Payrolls (Fallback)", "country": "US", "impact": "High",
-                     "forecast": "175K", "previous": "254K", "actual": "Pending", "surprise": ""}
-                ])
-        # --- END OF REPLACED INNER FUNCTION ---
-    
-        with st.spinner("Loading live economic calendar..."):
-            df = get_free_calendar()
-    
-        if df.empty:
-            st.info("No events loaded.")
-            if st.button("Refresh Calendar"):
-                st.cache_data.clear()
-                st.rerun()
-            return
-    
-        if search:
-            df = df[df["event"].str.contains(search, case=False, na=False)]
-        
-        if df.empty:
-            st.info(f"No events matching '{search}'.")
-            return
-    
-        st.markdown("""
-        <style>
-        .calendar-table { width: 100%; border-collapse: collapse; font-family: 'Segoe UI', sans-serif; margin: 10px 0; }
-        .calendar-table th { background: #1f77b4; color: white; padding: 12px; text-align: left; font-weight: 600; }
-        .calendar-table td { padding: 10px 12px; border-bottom: 1px solid #444; }
-        .calendar-table tr:hover { background: #2a2a2a !important; }
-        .impact-high { background: #ffebee; color: #c62828; font-weight: bold; }
-        .impact-medium { background: #fff3e0; color: #ef6c00; font-weight: bold; }
-        .impact-low { background: #f3e5f5; color: #6a1b9a; }
-        .actual-better { background: #e8f5e8; color: #2e7d32; font-weight: bold; }
-        .actual-worse { background: #ffebee; color: #c62828; font-weight: bold; }
-        .actual-expected { background: #fff8e1; color: #ff8f00; font-weight: bold; }
-        </style>
-        """, unsafe_allow_html=True)
-    
-        def style_row(row):
-            styles = [""] * len(row)
-            impact_high_css = "background: #ffebee; color: #c62828; font-weight: bold;"
-            impact_medium_css = "background: #fff3e0; color: #ef6c00; font-weight: bold;"
-            impact_low_css = "background: #f3e5f5; color: #6a1b9a;"
-            
-            actual_better_css = "background: #e8f5e8; color: #2e7d32; font-weight: bold;"
-            actual_worse_css = "background: #ffebee; color: #c62828; font-weight: bold;"
-            actual_expected_css = "background: #fff8e1; color: #ff8f00; font-weight: bold;"
-    
-            if row["impact"] == "High": styles[4] = impact_high_css
-            elif row["impact"] == "Medium": styles[4] = impact_medium_css
-            elif row["impact"] == "Low": styles[4] = impact_low_css
-    
-            if row["surprise"] == "Better than Expected": styles[8] = actual_better_css
-            elif row["surprise"] == "Worse than Expected": styles[8] = actual_worse_css
-            elif row["surprise"] == "As Expected": styles[8] = actual_expected_css
-            
-            return styles
-    
-        styled = df.style.apply(style_row, axis=1).set_table_attributes('class="calendar-table"')
-    
-        st.markdown(styled.to_html(), unsafe_allow_html=True)
-    
-        if st.button("Refresh Calendar"):
-            st.cache_data.clear()
-            st.rerun()
-    
-        st.caption("Source: ForexFactory (via faireconomy.media) • Live Actuals • Times in UTC")
-    # --- END OF CALENDAR FUNCTION ---
-
 
     # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
@@ -742,7 +582,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
         st.subheader("Equity Curve")
         
-        resolved_df_key = 'resolved_trades_df' if 'resolved_trades_df' in results else 'resolved_trades_ _df'
+        # --- FIX: Buggy line removed ---
+        resolved_df_key = 'resolved_trades_df' 
         
         if resolved_df_key in results and not results[resolved_df_key].empty:
             equity_fig = go.Figure()
@@ -802,9 +643,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     if is_premium:
         check_for_live_signal(df, selected_pair)
 
-    # --- NEWS CALENDAR SECTION ---
-    st.markdown("---")
-    display_news_calendar() # <-- This now calls the NEW, upgraded function
+    # --- NEWS CALENDAR SECTION (REMOVED) ---
     st.markdown("---")
 
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
@@ -860,10 +699,15 @@ elif st.session_state.page == "app" and st.session_state.user:
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
                         def style_profit(val):
                             color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0f0'; return f'color: {color}; font-weight: bold;'
+                        
+                        # --- FIX: Added NaN check to prevent crash ---
                         def style_win_rate(val):
+                            if pd.isna(val):
+                                return 'background-color: #333; color: #888;' # Neutral style for N/A
                             val = max(0, min(100, val)); color = 'white'
                             if val < 50: return f'background-color: rgba(239, 83, 80, {1 - (val/50)}); color: {color};'
                             else: return f'background-color: rgba(38, 166, 154, {(val-50)/50}); color: {color};'
+                        
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
                         
