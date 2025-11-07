@@ -1,12 +1,10 @@
-twelvedata
+setuptools
+streamlit>=1.28.0
 pandas
 numpy
 plotly
-TA-Lib  
+TA-Lib==0.4.28
+twelvedata
 pyrebase4
-streamlit
-gcloud
-google-cloud-storage
-setuptools
 requests
-streamlit-lightweight_charts
+lightweight-charts>=1.0.8
