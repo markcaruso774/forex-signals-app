@@ -621,14 +621,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     }
 
     # Initialize the chart
-    # --- FIX 1: Moved width/height ---
+    # --- FIX 1: Initialize blank chart, THEN set options ---
+    chart = StreamlitChart()
     chart_options["width"] = 1000
     chart_options["height"] = 500
-    
-    chart = StreamlitChart(
-        chart_options=chart_options,
-        time_scale_options={"timeVisible": True},
-    )
+    chart.set_options(chart_options)
+    chart.set_time_scale_options({"timeVisible": True})
 
     # 1. PREPARE THE DATA
     # The chart needs data in a specific list-of-dicts format
@@ -683,11 +681,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.subheader("RSI (Relative Strength Index)")
         
-        # --- FIX 2: Moved width/height ---
+        # --- FIX 2: Initialize blank chart, THEN set options ---
+        rsi_chart = StreamlitChart()
         chart_options["width"] = 1000
         chart_options["height"] = 200
-        
-        rsi_chart = StreamlitChart(chart_options=chart_options, time_scale_options={"timeVisible": True})
+        rsi_chart.set_options(chart_options)
+        rsi_chart.set_time_scale_options({"timeVisible": True})
         
         # Prepare RSI data
         rsi_data = df_reset[['time', 'rsi']].dropna().rename(columns={'rsi': 'value'}).to_dict(orient='records')
@@ -708,11 +707,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.subheader("MACD (Moving Average Convergence Divergence)")
         
-        # --- FIX 3: Moved width/height ---
+        # --- FIX 3: Initialize blank chart, THEN set options ---
+        macd_chart = StreamlitChart()
         chart_options["width"] = 1000
         chart_options["height"] = 200
-        
-        macd_chart = StreamlitChart(chart_options=chart_options, time_scale_options={"timeVisible": True})
+        macd_chart.set_options(chart_options)
+        macd_chart.set_time_scale_options({"timeVisible": True})
         
         # Add MACD line
         macd_line_data = df_reset[['time', 'macd_line']].dropna().rename(columns={'macd_line': 'value'}).to_dict(orient='records')
@@ -825,7 +825,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.warning(
         """
         This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance. 
-        Forex trading is extremely risky and can result in the loss of your entire capital. 
+        Forex trading is extremely risky and can result of your entire capital. 
         Always trade responsibly and stick to your risk management plan.
         """
     )
