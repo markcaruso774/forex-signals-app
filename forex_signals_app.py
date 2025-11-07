@@ -621,9 +621,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     }
 
     # Initialize the chart
+    # --- FIX 1: Moved width/height ---
+    chart_options["width"] = 1000
+    chart_options["height"] = 500
+    
     chart = StreamlitChart(
-        width=1000,
-        height=500,
         chart_options=chart_options,
         time_scale_options={"timeVisible": True},
     )
@@ -680,7 +682,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     if show_rsi:
         st.markdown("---")
         st.subheader("RSI (Relative Strength Index)")
-        rsi_chart = StreamlitChart(width=1000, height=200, chart_options=chart_options, time_scale_options={"timeVisible": True})
+        
+        # --- FIX 2: Moved width/height ---
+        chart_options["width"] = 1000
+        chart_options["height"] = 200
+        
+        rsi_chart = StreamlitChart(chart_options=chart_options, time_scale_options={"timeVisible": True})
         
         # Prepare RSI data
         rsi_data = df_reset[['time', 'rsi']].dropna().rename(columns={'rsi': 'value'}).to_dict(orient='records')
@@ -700,7 +707,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     if show_macd:
         st.markdown("---")
         st.subheader("MACD (Moving Average Convergence Divergence)")
-        macd_chart = StreamlitChart(width=1000, height=200, chart_options=chart_options, time_scale_options={"timeVisible": True})
+        
+        # --- FIX 3: Moved width/height ---
+        chart_options["width"] = 1000
+        chart_options["height"] = 200
+        
+        macd_chart = StreamlitChart(chart_options=chart_options, time_scale_options={"timeVisible": True})
         
         # Add MACD line
         macd_line_data = df_reset[['time', 'macd_line']].dropna().rename(columns={'macd_line': 'value'}).to_dict(orient='records')
