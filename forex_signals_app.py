@@ -234,7 +234,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             return df.iloc[::-1]
         except: return pd.DataFrame()
 
-    # ---- indicators & strategy (same as before) ----
+    # ---- indicators & strategy ----
     def add_indicators(df):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
@@ -268,7 +268,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             df.loc[(df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1)), 'signal'] = -1
         return df
 
-    # ---- backtest (same) ----
+    # ---- backtest ----
     def backtest(df_in, pair, capital, risk, sl, tp):
         df = df_in.copy(); trades = []
         pip = 0.01 if "JPY" in pair else 0.0001
@@ -312,24 +312,23 @@ elif st.session_state.page == "app" and st.session_state.user:
     def run_scanner():
         results = []
         for p in ALL_PAIRS:
-            with st.spinner(f"Scanning {p}..."):
-                df = fetch_data(p, INTERVALS[interval])
-                if df.empty or len(df) < 50: continue
-                df = add_indicators(df)
-                df = apply_strategy(df)
-                df = df.dropna()
-                if df.empty: continue
-                signals = df[df['signal'] != 0]
-                if signals.empty: continue
-                last_sig = signals.iloc[-1]
-                sig_type = "BUY" if last_sig['signal'] == 1 else "SELL"
-                results.append({
-                    "Pair": p,
-                    "Signal": sig_type,
-                    "Time": last_sig.name.strftime("%H:%M"),
-                    "RSI": f"{last_sig['rsi']:.1f}",
-                    "Price": f"{last_sig['close']:.5f}"
-                })
+            df = fetch_data(p, INTERVALS[interval])
+            if df.empty or len(df) < 50: continue
+            df = add_indicators(df)
+            df = apply_strategy(df)
+            df = df.dropna()
+            if df.empty: continue
+            signals = df[df['signal'] != 0]
+            if signals.empty: continue
+            last_sig = signals.iloc[-1]
+            sig_type = "BUY" if last_sig['signal'] == 1 else "SELL"
+            results.append({
+                "Pair": p,
+                "Signal": sig_type,
+                "Time": last_sig.name.strftime("%H:%M"),
+                "RSI": f"{last_sig['rsi']:.1f}",
+                "Price": f"{last_sig['close']:.5f}"
+            })
         return pd.DataFrame(results).sort_values("Pair")
 
     # ---- load main pair ----
@@ -343,28 +342,55 @@ elif st.session_state.page == "app" and st.session_state.user:
     if df.empty: st.warning("Not enough data."); st.stop()
 
     # ==============================================================
-    # MAIN CANDLESTICK CHART (CORRECT: chart.set())
+    # MAIN CANDLESTICK CHART – FIXED (NO .set(), NO .marker())
     # ==============================================================
     st.markdown("---")
     st.subheader(f"**{pair}** – **{interval}** – {len(df)} candles")
 
+    # Prepare OHLC
     df_lw = df.reset_index()
     ts_col = df_lw.columns[0]
     df_lw['time'] = (df_lw[ts_col].astype('int64') // 1_000_000_000).astype(int)
     ohlc = df_lw[['time','open','high','low','close']].to_dict('records')
 
-    chart = StreamlitChart(width=1000, height=500)
-    chart.set(ohlc)
+    # Create chart with data directly
+    chart = StreamlitChart(
+        ohlc,
+        width=1000,
+        height=500,
+        layout={
+            "backgroundColor": "#0e1117" if st.session_state.theme == "dark" else "#ffffff",
+            "textColor": "#f0f0f0" if st.session_state.theme == "dark" else "#212529"
+        },
+        grid={
+            "vertLines": {"color": "#444" if st.session_state.theme == "dark" else "#ddd"},
+            "horzLines": {"color": "#444" if st.session_state.theme == "dark" else "#ddd"}
+        },
+        time_scale={"timeVisible": True, "secondsVisible": False}
+    )
 
-    buy = df[df['signal']==1].reset_index()
-    sell = df[df['signal']==-1].reset_index()
-    buy['time'] = (buy.iloc[:,0].astype('int64') // 1_000_000_000).astype(int)
-    sell['time'] = (sell.iloc[:,0].astype('int64') // 1_000_000_000).astype(int)
-    chart.marker([{"time":t,"position":"belowBar","color":"#26a69a","shape":"arrowUp","text":"BUY"} for t in buy['time']])
-    chart.marker([{"time":t,"position":"aboveBar","color":"#ef5350","shape":"arrowDown","text":"SELL"} for t in sell['time']])
+    # Buy/Sell markers via Plotly overlay (lightweight-charts has no .marker())
+    buy = df[df['signal'] == 1].reset_index()
+    sell = df[df['signal'] == -1].reset_index()
+    buy['time'] = (buy.iloc[:, 0].astype('int64') // 1_000_000_000).astype(int)
+    sell['time'] = (sell.iloc[:, 0].astype('int64') // 1_000_000_000).astype(int)
+
+    overlay = go.Figure()
+    if not buy.empty:
+        overlay.add_scatter(x=buy['time'], y=buy['low'] * 0.999, mode='markers',
+                            marker=dict(symbol='arrow-up', size=14, color='#26a69a'), name='BUY')
+    if not sell.empty:
+        overlay.add_scatter(x=sell['time'], y=sell['high'] * 1.001, mode='markers',
+                            marker=dict(symbol='arrow-down', size=14, color='#ef5350'), name='SELL')
+    overlay.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        height=500, margin=dict(l=0,r=0,t=0,b=0)
+    )
+    st.plotly_chart(overlay, use_container_width=True, config={'displayModeBar': False})
 
     # ==============================================================
-    # RSI & MACD (Plotly)
+    # RSI & MACD – Plotly
     # ==============================================================
     if show_rsi:
         st.markdown("---"); st.subheader("RSI")
@@ -372,7 +398,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig_rsi.add_scatter(x=df.index, y=df['rsi'], name="RSI", line=dict(color="#ff9800"))
         fig_rsi.add_hline(y=rsi_high, line_dash="dash", line_color="#ef5350")
         fig_rsi.add_hline(y=rsi_low, line_dash="dash", line_color="#26a69a")
-        fig_rsi.update_layout(height=200, template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
+        fig_rsi.update_layout(height=200,
+                              template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
         st.plotly_chart(fig_rsi, use_container_width=True)
 
     if show_macd:
@@ -382,11 +409,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig_macd.add_scatter(x=df.index, y=df['macd_sig'], name="Signal", line=dict(color="#ff9800"))
         fig_macd.add_bar(x=df.index, y=df['macd_hist'], name="Histogram",
                          marker_color=np.where(df['macd_hist']>=0, '#26a69a', '#ef5350'))
-        fig_macd.update_layout(height=200, template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
+        fig_macd.update_layout(height=200,
+                              template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
         st.plotly_chart(fig_macd, use_container_width=True)
 
     # ==============================================================
-    # SCANNER (RESTORED!)
+    # SCANNER
     # ==============================================================
     if run_scan:
         with st.spinner("Scanning all pairs..."):
@@ -430,7 +458,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         if not r["res"].empty:
             eq = go.Figure()
             eq.add_scatter(x=r["res"].index, y=r["res"]['equity'], mode='lines', line=dict(color='#26a69a'))
-            eq.update_layout(height=300, template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
+            eq.update_layout(height=300,
+                             template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
             st.plotly_chart(eq, use_container_width=True)
         st.dataframe(r["log"])
 
