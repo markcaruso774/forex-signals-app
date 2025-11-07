@@ -9,4 +9,4 @@ gcloud
 google-cloud-storage
 setuptools
 requests
-streamlit-lightweight-charts
+streamlit-lightweight_charts
