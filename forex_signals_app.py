@@ -165,7 +165,11 @@ def verify_payment(reference):
         return False
 
     try:
-        url = f"https{st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
+        # --- SYNTAX ERROR FIX ---
+        # The URL was incorrect. It needs to use the 'reference' variable.
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        
+        headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
         response = requests.get(url, headers=headers)
         response_data = response.json()
@@ -401,7 +405,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
-    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=1000, value=10000, key='capital')
+    # --- LOGIC CHANGE: Min capital set to 100 ---
+    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     
@@ -733,46 +738,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01,.set_data()`.
-
-This implies that `create_line` does not return an object that you can set data on later.
-
-Let's rethink the structure.
-What if `set_data` is the *only* way to add data?
-The library seems to have a `chart.set_data()` method (which failed before) and a `chart.set()` method.
-
-My previous-to-last fix was:
-`chart.set_data(chart_data, series_type='candlestick', ...)`
-This failed with `AttributeError: 'StreamlitChart' object has no attribute 'set_data'`.
-
-My last fix was:
-`candle_series = chart.add_candlestick_series(...)`
-`candle_series.set_data(chart_data)`
-This failed with `AttributeError: 'StreamlitChart' object has no attribute 'add_candlestick_series'`.
-
-This is a very confusing API. Let's look at the library's actual usage examples.
-
-A quick search for `streamlit-lightweight-charts` examples shows:
-1.  You create the chart: `chart = StreamlitChart()`
-2.  You set options: `chart.layout_options = ...`
-3.  You set the main data (candlesticks): `chart.set(df)`
-4.  You create other series (lines): `line = chart.create_line(...)`
-5.  You set data *for the line*: `line.set(df_line_data)`
-
-It appears the method is `.set()`, not `.set_data()`. This makes sense. The `AttributeError` is because `.set_data()` doesn't exist, but `.set()` likely does.
-
-So, the previous error on line 663 (`AttributeError` on `add_candlestick_series`) was because that's not how you add the main series. You just call `chart.set(df)`.
-
-The current error on line 664 (`AttributeError` on `sma_line.set_data`) is because the method is `sma_line.set(sma_data)`, not `sma_line.set_data`.
-
-I will apply this fix to all data-setting calls:
-1.  `chart.set(df_chart)` (This was in my second-to-last fix, but I changed it)
-2.  `sma_line.set(sma_data)` (This is the current error)
-3.  The RSI chart will use `rsi_chart.set(rsi_data, ...)`
-4.  The MACD lines will use `macd_line.set(macd_line_data)` and `signal_line.set(signal_line_data)`
-5.  The MACD histogram will use `hist_series.set(hist_data, ...)`
-
-This seems to be the consistent, correct pattern. My apologies to the user, this has been a painful process. I will now generate the corrected code. "sl": 50, "tp": 100} # <-- TP default is 100
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
