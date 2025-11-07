@@ -165,7 +165,7 @@ def verify_payment(reference):
         return False
 
     try:
-        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        url = f"https.api.paystack.co/transaction/verify/{reference}"
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
         response = requests.get(url, headers=headers)
@@ -610,6 +610,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     chart = StreamlitChart()
     
+    # Set options as attributes
     chart.layout_options = {
         "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff",
         "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529",
@@ -627,7 +628,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     index_col_name = df_reset.columns[0]
     df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**9).astype(int) 
     
-    chart_data = df_reset[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records')
+    # --- FIX: Rename columns for the library ---
+    df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
+    
     sma_data = df_reset[['time', 'sma']].dropna().rename(columns={'sma': 'value'}).to_dict(orient='records')
     
     buy_signals = df[df['signal'] == 1].reset_index()
@@ -649,15 +652,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     ]
     
     # 2. LOAD DATA INTO THE CHART
-    # --- FIX: Changed 'create_candlestick_series' to 'add_candlestick_series' ---
-    candle_series = chart.add_candlestick_series(
-        up_color="#26a69a",
-        down_color="#ef5350",
-        border_visible=False,
-        wick_up_color="#26a69a",
-        wick_down_color="#ef5350",
-    )
-    candle_series.set_data(chart_data)
+    # --- FIX: Use chart.set() to load the main DataFrame ---
+    chart.set(df_chart)
     
     # Create and set the SMA line
     sma_line = chart.create_line(
@@ -667,64 +663,49 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set_data(sma_data)
     
-    candle_series.set_markers(buy_markers + sell_markers)
+    chart.set_markers(buy_markers + sell_markers)
 
     # 3. RENDER THE CHART
     chart.load(width=1000, height=500)
 
     # --- SUBPLOTS (RSI / MACD) ---
+    # --- REVERTED TO PLOTLY: The library doesn't support subplots well ---
+    # We will use our old, reliable Plotly code for the subplots.
+    
+    fig_subplots = make_subplots(
+        rows=2 if show_rsi and show_macd else 1,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
+    )
+    
+    current_row = 1
     if show_rsi:
-        st.markdown("---")
-        st.subheader("RSI (Relative Strength Index)")
+        fig_subplots.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
+        fig_subplots.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=current_row, col=1)
+        fig_subplots.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=current_row, col=1)
+        fig_subplots.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
+        fig_subplots.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=current_row, col=1)
+        current_row += 1
         
-        rsi_chart = StreamlitChart()
-        rsi_chart.layout_options = chart.layout_options
-        rsi_chart.grid_options = chart.grid_options
-        rsi_chart.time_scale_options = chart.time_scale_options
-        
-        rsi_data = df_reset[['time', 'rsi']].dropna().rename(columns={'rsi': 'value'}).to_dict(orient='records')
-        
-        rsi_line = rsi_chart.create_line(name="RSI", color="#9c27b0", width=2)
-        rsi_line.set_data(rsi_data)
-        
-        # Add overbought/oversold lines
-        rsi_chart.create_line(
-            data=[{"time": df_reset.iloc[0]['time'], "value": alert_rsi_high}, {"time": df_reset.iloc[-1]['time'], "value": alert_rsi_high}],
-            color="#ef5350", width=2, style='dashed', name="Overbought"
-        )
-        rsi_chart.create_line(
-            data=[{"time": df_reset.iloc[0]['time'], "value": alert_rsi_low}, {"time": df_reset.iloc[-1]['time'], "value": alert_rsi_low}],
-            color="#26a69a", width=2, style='dashed', name="Oversold"
-        )
-        rsi_chart.load(width=1000, height=200)
-
     if show_macd:
-        st.markdown("---")
-        st.subheader("MACD (Moving Average Convergence Divergence)")
+        fig_subplots.add_trace(go.Scatter(x=df.index, y=df['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
+        fig_subplots.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
+        colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df['macd_hist']]
+        fig_subplots.add_trace(go.Bar(x=df.index, y=df['macd_hist'], name='Histogram', marker_color=colors), row=current_row, col=1)
+        fig_subplots.update_yaxes(title_text="MACD", row=current_row, col=1)
+        fig_subplots.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
         
-        macd_chart = StreamlitChart()
-        macd_chart.layout_options = chart.layout_options
-        macd_chart.grid_options = chart.grid_options
-        macd_chart.time_scale_options = chart.time_scale_options
-        
-        # Add MACD line
-        macd_line_data = df_reset[['time', 'macd_line']].dropna().rename(columns={'macd_line': 'value'}).to_dict(orient='records')
-        macd_line = macd_chart.create_line(name="MACD", color="#2196f3", width=2)
-        macd_line.set_data(macd_line_data)
-        
-        # Add Signal line
-        signal_line_data = df_reset[['time', 'macd_signal']].dropna().rename(columns={'macd_signal': 'value'}).to_dict(orient='records')
-        signal_line = macd_chart.create_line(name="Signal", color="#ff9800", width=2)
-        signal_line.set_data(signal_line_data)
-        
-        # Add Histogram
-        hist_data = df_reset[['time', 'macd_hist']].dropna().rename(columns={'macd_hist': 'value'})
-        hist_data['color'] = ['#26a69a' if v >= 0 else '#ef5350' for v in hist_data['value']]
-        
-        hist_series = macd_chart.create_histogram(name="Histogram")
-        hist_series.set_data(hist_data[['time', 'value', 'color']].to_dict(orient='records'))
-        
-        macd_chart.load(width=1000, height=200)
+    if show_rsi or show_macd:
+        fig_subplots.update_layout(
+            height=200 * (current_row - 1),
+            template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
+            xaxis_rangeslider_visible=False,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
+
 
     # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
@@ -748,9 +729,9 @@ elif st.session_state.page == "app" and st.session_state.user:
             ]
             
             col1, col2, col3 = st.columns(3)
-            scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
-            scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
-            scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
+            scan_pairs = col1.multiset("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
+            scan_intervals = col2.multiselet("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
+            scan_strategies = col3.multiset("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
             scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
