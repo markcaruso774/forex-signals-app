@@ -627,8 +627,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     # 1. PREPARE THE DATA
     # The chart needs data in a specific list-of-dicts format
     df_reset = df.reset_index()
+    # --- FIX (KeyError): Get index column by position, not name ---
+    index_col_name = df_reset.columns[0]
     # Convert datetime index to POSIX timestamp (required by the library)
-    df_reset['time'] = (df_reset['index'].astype(int) / 10**9).astype(int) 
+    df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**9).astype(int) 
     
     # Main candlestick data
     chart_data = df_reset[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records')
@@ -640,8 +642,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     buy_signals = df[df['signal'] == 1].reset_index()
     sell_signals = df[df['signal'] == -1].reset_index()
     
-    buy_signals['time'] = (buy_signals['index'].astype(int) / 10**9).astype(int)
-    sell_signals['time'] = (sell_signals['index'].astype(int) / 10**9).astype(int)
+    # --- FIX (KeyError): Get index column by position, not name ---
+    buy_index_col = buy_signals.columns[0]
+    sell_index_col = sell_signals.columns[0]
+    
+    buy_signals['time'] = (buy_signals[buy_index_col].astype(int) / 10**9).astype(int)
+    sell_signals['time'] = (sell_signals[sell_index_col].astype(int) / 10**9).astype(int)
 
     buy_markers = [
         {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
@@ -724,7 +730,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         # Add Histogram
         hist_data = df_reset[['time', 'macd_hist']].dropna().rename(columns={'macd_hist': 'value'})
-        hist_data['color'] = ['#26a69a' if v >= 0 else '#ef5350' for v in hist_data['value']]
+        hist_data['color'] = ['#26a6a9' if v >= 0 else '#ef5350' for v in hist_data['value']]
         
         hist_series = macd_chart.create_histogram(name="Histogram")
         hist_series.set_data(hist_data[['time', 'value', 'color']].to_dict(orient='records'))
