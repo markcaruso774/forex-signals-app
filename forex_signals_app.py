@@ -11,6 +11,9 @@ import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & Calendar
 
+# --- NEW LIBRARY ---
+from lightweight_charts.widgets import StreamlitChart
+
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
     """Loads Firebase config from Streamlit Secrets and initializes the app."""
@@ -598,46 +601,125 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
-    # === MAIN CHART ===
+    # === MAIN CHART (LIGHTWEIGHT CHARTS) ===
     st.markdown("---")
     st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df)} Candles")
-    chart_type = st.radio("Chart Type", ["Candlestick", "Line"], horizontal=True, label_visibility="collapsed")
-    num_rows = 1; row_heights = [0.7]; rsi_row = 0; macd_row = 0
-    if show_rsi: num_rows += 1; row_heights.append(0.15)
-    if show_macd: num_rows += 1; row_heights.append(0.15)
-    current_row = 2
-    if show_rsi: rsi_row = current_row; current_row += 1
-    if show_macd: macd_row = current_row
-    fig = make_subplots(rows=num_rows, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
-    buy_signals, sell_signals = df[df['signal'] == 1], df[df['signal'] == -1]
-    theme_colors = {"dark": {"increase": "#26a69a", "decrease": "#ef5350", "line": "#2196f3"}, "light": {"increase": "#28a745", "decrease": "#dc3545", "line": "#0d6efd"}}
-    current_theme = "dark" if st.session_state.theme == "dark" else "light"
-    if chart_type == "Candlestick":
-        fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'], low=df['low'], close=df['close'], name="Price", increasing_line_color=theme_colors[current_theme]["increase"], decreasing_line_color=theme_colors[current_theme]["decrease"]), row=1, col=1)
-    else:
-        fig.add_trace(go.Scatter(x=df.index, y=df['close'], name="Price", line=dict(color=theme_colors[current_theme]["line"])), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['sma'], name=f"SMA({sma_period})", line=dict(color="#ff9800")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['low'] * 0.9995, mode='markers', marker=dict(symbol='triangle-up', size=10, color='#26a69a'), name='Buy Signal'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['high'] * 1.0005, mode='markers', marker=dict(symbol='triangle-down', size=10, color='#ef5350'), name='Sell Signal'), row=1, col=1)
-    fig.update_yaxes(title_text="Price", row=1, col=1)
+    
+    # Set chart options based on theme
+    chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
+    chart_options = {
+        "layout": {
+            "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff",
+            "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529",
+        },
+        "grid": {
+            "vertLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
+            "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
+        },
+        "priceScale": {"borderColor": "#777"},
+        "timeScale": {"borderColor": "#777"},
+    }
+
+    # Initialize the chart
+    chart = StreamlitChart(
+        width=1000,
+        height=500,
+        chart_options=chart_options,
+        time_scale_options={"timeVisible": True},
+    )
+
+    # 1. PREPARE THE DATA
+    # The chart needs data in a specific list-of-dicts format
+    df_reset = df.reset_index()
+    # Convert datetime index to POSIX timestamp (required by the library)
+    df_reset['time'] = (df_reset['index'].astype(int) / 10**9).astype(int) 
+    
+    # Main candlestick data
+    chart_data = df_reset[['time', 'open', 'high', 'low', 'close']].to_dict(orient='records')
+    
+    # SMA line data
+    sma_data = df_reset[['time', 'sma']].dropna().rename(columns={'sma': 'value'}).to_dict(orient='records')
+    
+    # Buy/Sell markers
+    buy_signals = df[df['signal'] == 1].reset_index()
+    sell_signals = df[df['signal'] == -1].reset_index()
+    
+    buy_signals['time'] = (buy_signals['index'].astype(int) / 10**9).astype(int)
+    sell_signals['time'] = (sell_signals['index'].astype(int) / 10**9).astype(int)
+
+    buy_markers = [
+        {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
+        for _, row in buy_signals.iterrows()
+    ]
+    sell_markers = [
+        {"time": row['time'], "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "SELL"}
+        for _, row in sell_signals.iterrows()
+    ]
+    
+    # 2. LOAD DATA INTO THE CHART
+    # Set the main candlestick data
+    chart.set_data(chart_data)
+    
+    # Create and set the SMA line
+    sma_line = chart.create_line(
+        name="SMA",
+        color="#ff9800",
+        width=2
+    )
+    sma_line.set_data(sma_data)
+    
+    # Set the buy/sell markers
+    chart.set_markers(buy_markers + sell_markers)
+
+    # 3. RENDER THE CHART
+    chart.load()
+
+    # --- SUBPLOTS (RSI / MACD) ---
+    # We must render these as *separate* charts now
+    
     if show_rsi:
-        fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=rsi_row, col=1)
-        fig.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=rsi_row, col=1)
-        fig.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=rsi_row, col=1)
-        fig.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=rsi_row, col=1)
-        fig.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=rsi_row, col=1)
+        st.markdown("---")
+        st.subheader("RSI (Relative Strength Index)")
+        rsi_chart = StreamlitChart(width=1000, height=200, chart_options=chart_options, time_scale_options={"timeVisible": True})
+        
+        # Prepare RSI data
+        rsi_data = df_reset[['time', 'rsi']].dropna().rename(columns={'rsi': 'value'}).to_dict(orient='records')
+        rsi_chart.set_data(rsi_data, series_type='line') # Explicitly set as line
+        
+        # Add overbought/oversold lines
+        rsi_chart.create_line(
+            data=[{"time": df_reset.iloc[0]['time'], "value": alert_rsi_high}, {"time": df_reset.iloc[-1]['time'], "value": alert_rsi_high}],
+            color="#ef5350", width=2, style='dashed', name="Overbought"
+        )
+        rsi_chart.create_line(
+            data=[{"time": df_reset.iloc[0]['time'], "value": alert_rsi_low}, {"time": df_reset.iloc[-1]['time'], "value": alert_rsi_low}],
+            color="#26a69a", width=2, style='dashed', name="Oversold"
+        )
+        rsi_chart.load()
+
     if show_macd:
-        fig.add_trace(go.Scatter(x=df.index, y=df['macd_line'], name='MACD', line=dict(color='#2196f3')), row=macd_row, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=macd_row, col=1)
-        colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df['macd_hist']]
-        fig.add_trace(go.Bar(x=df.index, y=df['macd_hist'], name='Histogram', marker_color=colors), row=macd_row, col=1)
-        fig.update_yaxes(title_text="MACD", row=macd_row, col=1)
-        fig.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=macd_row, col=1)
-    
-    # --- CRASH FIX ---
-    fig.update_layout(height=600, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.markdown("---")
+        st.subheader("MACD (Moving Average Convergence Divergence)")
+        macd_chart = StreamlitChart(width=1000, height=200, chart_options=chart_options, time_scale_options={"timeVisible": True})
+        
+        # Add MACD line
+        macd_line_data = df_reset[['time', 'macd_line']].dropna().rename(columns={'macd_line': 'value'}).to_dict(orient='records')
+        macd_line = macd_chart.create_line(name="MACD", color="#2196f3", width=2)
+        macd_line.set_data(macd_line_data)
+        
+        # Add Signal line
+        signal_line_data = df_reset[['time', 'macd_signal']].dropna().rename(columns={'macd_signal': 'value'}).to_dict(orient='records')
+        signal_line = macd_chart.create_line(name="Signal", color="#ff9800", width=2)
+        signal_line.set_data(signal_line_data)
+        
+        # Add Histogram
+        hist_data = df_reset[['time', 'macd_hist']].dropna().rename(columns={'macd_hist': 'value'})
+        hist_data['color'] = ['#26a69a' if v >= 0 else '#ef5350' for v in hist_data['value']]
+        
+        hist_series = macd_chart.create_histogram(name="Histogram")
+        hist_series.set_data(hist_data[['time', 'value', 'color']].to_dict(orient='records'))
+        
+        macd_chart.load()
 
     # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
@@ -736,7 +818,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
-    # === AUTO-REFRESH COMPONENT ===
+    # === AUTO-REFRESH COMPONENT (STILL NEEDED!) ===
+    # This is our "engine" that fetches new data every 60 seconds
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
 # === 6. Error handling for auth/db init failure ===
