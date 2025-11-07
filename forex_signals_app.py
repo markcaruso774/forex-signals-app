@@ -27,7 +27,7 @@ def initialize_firebase():
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
-                config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
+                config["databaseURL"] = f"https{project_id}-default-rtdb.firebaseio.com/"
             else:
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
         
@@ -608,10 +608,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     # Set chart options based on theme
     chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
     
-    # --- FIX 1: Initialize blank chart ---
+    # --- FIX: Initialize blank chart ---
     chart = StreamlitChart()
     
-    # --- FIX 1: Set options as attributes ---
+    # --- FIX: Set options as attributes ---
     chart.layout_options = {
         "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff",
         "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529",
@@ -659,8 +659,15 @@ elif st.session_state.page == "app" and st.session_state.user:
     ]
     
     # 2. LOAD DATA INTO THE CHART
-    # Set the main candlestick data
-    chart.set_data(chart_data)
+    # --- FIX: Create a series and set data on the series ---
+    candle_series = chart.create_candlestick_series(
+        up_color="#26a69a",
+        down_color="#ef5350",
+        border_visible=False,
+        wick_up_color="#26a69a",
+        wick_down_color="#ef5350",
+    )
+    candle_series.set_data(chart_data)
     
     # Create and set the SMA line
     sma_line = chart.create_line(
@@ -670,11 +677,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set_data(sma_data)
     
-    # Set the buy/sell markers
-    chart.set_markers(buy_markers + sell_markers)
+    # --- FIX: Set markers on the candlestick series ---
+    candle_series.set_markers(buy_markers + sell_markers)
 
     # 3. RENDER THE CHART
-    # --- FIX 1: Set width/height here ---
+    # --- FIX: Set width/height here ---
     chart.load(width=1000, height=500)
 
     # --- SUBPLOTS (RSI / MACD) ---
@@ -684,16 +691,19 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.subheader("RSI (Relative Strength Index)")
         
-        # --- FIX 2: Initialize blank chart ---
+        # --- FIX: Initialize blank chart ---
         rsi_chart = StreamlitChart()
-        # --- FIX 2: Set options as attributes ---
+        # --- FIX: Set options as attributes ---
         rsi_chart.layout_options = chart.layout_options
         rsi_chart.grid_options = chart.grid_options
         rsi_chart.time_scale_options = chart.time_scale_options
         
         # Prepare RSI data
         rsi_data = df_reset[['time', 'rsi']].dropna().rename(columns={'rsi': 'value'}).to_dict(orient='records')
-        rsi_chart.set_data(rsi_data, series_type='line') # Explicitly set as line
+        
+        # --- FIX: Create a series and set data on the series ---
+        rsi_line = rsi_chart.create_line(name="RSI", color="#9c27b0", width=2)
+        rsi_line.set_data(rsi_data)
         
         # Add overbought/oversold lines
         rsi_chart.create_line(
@@ -704,16 +714,16 @@ elif st.session_state.page == "app" and st.session_state.user:
             data=[{"time": df_reset.iloc[0]['time'], "value": alert_rsi_low}, {"time": df_reset.iloc[-1]['time'], "value": alert_rsi_low}],
             color="#26a69a", width=2, style='dashed', name="Oversold"
         )
-        # --- FIX 2: Set width/height here ---
+        # --- FIX: Set width/height here ---
         rsi_chart.load(width=1000, height=200)
 
     if show_macd:
         st.markdown("---")
         st.subheader("MACD (Moving Average Convergence Divergence)")
         
-        # --- FIX 3: Initialize blank chart ---
+        # --- FIX: Initialize blank chart ---
         macd_chart = StreamlitChart()
-        # --- FIX 3: Set options as attributes ---
+        # --- FIX: Set options as attributes ---
         macd_chart.layout_options = chart.layout_options
         macd_chart.grid_options = chart.grid_options
         macd_chart.time_scale_options = chart.time_scale_options
@@ -730,12 +740,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         # Add Histogram
         hist_data = df_reset[['time', 'macd_hist']].dropna().rename(columns={'macd_hist': 'value'})
-        hist_data['color'] = ['#26a6a9' if v >= 0 else '#ef5350' for v in hist_data['value']]
+        hist_data['color'] = ['#26a69a' if v >= 0 else '#ef5350' for v in hist_data['value']]
         
         hist_series = macd_chart.create_histogram(name="Histogram")
         hist_series.set_data(hist_data[['time', 'value', 'color']].to_dict(orient='records'))
         
-        # --- FIX 3: Set width/height here ---
+        # --- FIX: Set width/height here ---
         macd_chart.load(width=1000, height=200)
 
     # === LIVE SIGNAL ALERT CHECK ===
