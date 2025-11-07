@@ -607,26 +607,22 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # Set chart options based on theme
     chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
-    chart_options = {
-        "layout": {
-            "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff",
-            "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529",
-        },
-        "grid": {
-            "vertLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
-            "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
-        },
-        "priceScale": {"borderColor": "#777"},
-        "timeScale": {"borderColor": "#777"},
-    }
-
-    # Initialize the chart
-    # --- FIX 1: Initialize blank chart, THEN set options ---
+    
+    # --- FIX 1: Initialize blank chart ---
     chart = StreamlitChart()
-    chart_options["width"] = 1000
-    chart_options["height"] = 500
-    chart.set_options(chart_options)
-    chart.set_time_scale_options({"timeVisible": True})
+    
+    # --- FIX 1: Set options as attributes ---
+    chart.layout_options = {
+        "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff",
+        "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529",
+    }
+    chart.grid_options = {
+        "vertLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
+        "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
+    }
+    chart.price_scale_options = {"borderColor": "#777"}
+    chart.time_scale_options = {"borderColor": "#777", "timeVisible": True}
+
 
     # 1. PREPARE THE DATA
     # The chart needs data in a specific list-of-dicts format
@@ -672,7 +668,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     chart.set_markers(buy_markers + sell_markers)
 
     # 3. RENDER THE CHART
-    chart.load()
+    # --- FIX 1: Set width/height here ---
+    chart.load(width=1000, height=500)
 
     # --- SUBPLOTS (RSI / MACD) ---
     # We must render these as *separate* charts now
@@ -681,12 +678,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.subheader("RSI (Relative Strength Index)")
         
-        # --- FIX 2: Initialize blank chart, THEN set options ---
+        # --- FIX 2: Initialize blank chart ---
         rsi_chart = StreamlitChart()
-        chart_options["width"] = 1000
-        chart_options["height"] = 200
-        rsi_chart.set_options(chart_options)
-        rsi_chart.set_time_scale_options({"timeVisible": True})
+        # --- FIX 2: Set options as attributes ---
+        rsi_chart.layout_options = chart.layout_options
+        rsi_chart.grid_options = chart.grid_options
+        rsi_chart.time_scale_options = chart.time_scale_options
         
         # Prepare RSI data
         rsi_data = df_reset[['time', 'rsi']].dropna().rename(columns={'rsi': 'value'}).to_dict(orient='records')
@@ -701,18 +698,19 @@ elif st.session_state.page == "app" and st.session_state.user:
             data=[{"time": df_reset.iloc[0]['time'], "value": alert_rsi_low}, {"time": df_reset.iloc[-1]['time'], "value": alert_rsi_low}],
             color="#26a69a", width=2, style='dashed', name="Oversold"
         )
-        rsi_chart.load()
+        # --- FIX 2: Set width/height here ---
+        rsi_chart.load(width=1000, height=200)
 
     if show_macd:
         st.markdown("---")
         st.subheader("MACD (Moving Average Convergence Divergence)")
         
-        # --- FIX 3: Initialize blank chart, THEN set options ---
+        # --- FIX 3: Initialize blank chart ---
         macd_chart = StreamlitChart()
-        chart_options["width"] = 1000
-        chart_options["height"] = 200
-        macd_chart.set_options(chart_options)
-        macd_chart.set_time_scale_options({"timeVisible": True})
+        # --- FIX 3: Set options as attributes ---
+        macd_chart.layout_options = chart.layout_options
+        macd_chart.grid_options = chart.grid_options
+        macd_chart.time_scale_options = chart.time_scale_options
         
         # Add MACD line
         macd_line_data = df_reset[['time', 'macd_line']].dropna().rename(columns={'macd_line': 'value'}).to_dict(orient='records')
@@ -731,7 +729,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         hist_series = macd_chart.create_histogram(name="Histogram")
         hist_series.set_data(hist_data[['time', 'value', 'color']].to_dict(orient='records'))
         
-        macd_chart.load()
+        # --- FIX 3: Set width/height here ---
+        macd_chart.load(width=1000, height=200)
 
     # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
