@@ -1,77 +1,87 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime
-import streamlit.components.v1 as components
-import talib
-from twelvedata import TDClient
-import pyrebase
-import json
-import requests
-from lightweight_charts.widgets import StreamlitChart
-
-# ==============================================================
-# 1. FIREBASE
-# ==============================================================
+# === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
+    """Loads Firebase config from Streamlit Secrets and initializes the app."""
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
-            st.error("Firebase config not found.")
+            st.error("Firebase config not found in Streamlit Secrets.")
             return None, None
-        cfg = st.secrets["FIREBASE_CONFIG"]
-        if "databaseURL" not in cfg:
-            pid = cfg.get('projectId', cfg.get('project_id'))
-            if pid:
-                cfg["databaseURL"] = f"https://{pid}-default-rtdb.firebaseio.com/"
+        
+        config = st.secrets["FIREBASE_CONFIG"]
+        
+        if "databaseURL" not in config:
+            project_id = config.get('projectId', config.get('project_id'))
+            if project_id:
+                config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
             else:
-                cfg["databaseURL"] = f"https://{cfg['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
-        firebase = pyrebase.initialize_app(cfg)
-        return firebase.auth(), firebase.database()
+                config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
+
+        try:
+            firebase = pyrebase.initialize_app(config)
+            auth = firebase.auth()
+            db = firebase.database()
+            return auth, db
+        except Exception as e:
+            st.error(f"Error initializing Firebase (check config format): {e}")
+            return None, None
+            
     except Exception as e:
-        st.error(f"Firebase error: {e}")
+        st.error(f"Error loading Streamlit Secrets: {e}")
         return None, None
 
 auth, db = initialize_firebase()
 
-# ==============================================================
-# 2. SESSION STATE
-# ==============================================================
-for key, default in [
-    ("user", None), ("is_premium", False), ("page", "login"),
-    ("theme", "dark"), ("backtest_results", None), ("scanner_results", None)
-]:
-    if key not in st.session_state:
-        st.session_state[key] = default
+# === 2. SESSION STATE MANAGEMENT ===
+if 'user' not in st.session_state:
+    st.session_state.user = None
+if 'is_premium' not in st.session_state:
+    st.session_state.is_premium = False
+if 'page' not in st.session_state:
+    st.session_state.page = "login" # Start on 'login'
 
-# ==============================================================
-# 3. AUTH
-# ==============================================================
-def sign_up(email, pwd):
-    if not (auth and db): st.error("Auth unavailable."); return
+# === 3. AUTHENTICATION FUNCTIONS ===
+def sign_up(email, password):
+    if auth is None or db is None:
+        st.error("Auth service not available. Contact support.")
+        return
     try:
-        user = auth.create_user_with_email_and_password(email, pwd)
+        user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        db.child("users").child(user["localId"]).set({"email": email, "subscription_status": "free"})
+        user_data = {"email": email, "subscription_status": "free"}
+        db.child("users").child(user['localId']).set(user_data)
         st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
     except Exception as e:
-        msg = json.loads(e.args[1]).get("error", {}).get("message", "Unknown")
-        st.error(f"Sign-up failed: {msg}")
+        error_message = "An unknown error occurred."
+        try:
+            error_json = e.args[1]
+            error_message = json.loads(error_json).get('error', {}).get('message', error_message)
+        except:
+            pass
+        st.error(f"Failed to create account: {error_message}")
 
-def login(email, pwd):
-    if not (auth and db): st.error("Auth unavailable."); return
+def login(email, password):
+    if auth is None or db is None:
+        st.error("Auth service not available. Contact support.")
+        return
     try:
-        user = auth.sign_in_with_email_and_password(email, pwd)
+        user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        data = db.child("users").child(user["localId"]).get().val()
-        st.session_state.is_premium = data and data.get("subscription_status") == "premium"
+        user_data = db.child("users").child(user['localId']).get().val()
+        if user_data and user_data.get("subscription_status") == "premium":
+            st.session_state.is_premium = True
+        else:
+            st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
     except Exception as e:
-        msg = json.loads(e.args[1]).get("error", {}).get("message", "Unknown")
-        st.error(f"Login failed: {msg}")
+        error_message = "An unknown error occurred."
+        try:
+            error_json = e.args[1]
+            error_message = json.loads(error_json).get('error', {}).get('message', error_message)
+        except:
+            pass
+        st.error(f"Login Failed: {error_message}")
 
 def logout():
     st.session_state.user = None
@@ -79,395 +89,418 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# ==============================================================
-# 4. PAYSTACK
-# ==============================================================
-def create_payment_link(email, uid):
-    if "PAYSTACK_TEST" not in st.secrets: st.error("Paystack not configured."); return None, None
-    if "APP_URL" not in st.secrets: st.error("APP_URL missing."); return None, None
+# === 4. PAYSTACK PAYMENT FUNCTIONS ===
+def create_payment_link(email, user_id):
+    """
+    Calls Paystack API to create a one-time payment link.
+    """
+    test_amount_kobo = 10000 # 100 NGN * 100 kobo
+    
+    if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
+        st.error("Paystack secret key not configured in Streamlit Secrets.")
+        return None, None
+
     url = "https://api.paystack.co/transaction/initialize"
-    headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
-               "Content-Type": "application/json"}
-    payload = {"email": email, "amount": 10000, "callback_url": st.secrets["APP_URL"],
-               "metadata": {"user_id": uid, "user_email": email}}
+    headers = {
+        "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
+        "Content-Type": "application/json"
+    }
+    
+    if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
+        st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
+        st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
+        return None, None
+        
+    APP_URL = st.secrets["APP_URL"]
+
+    payload = {
+        "email": email,
+        "amount": test_amount_kobo, 
+        "callback_url": APP_URL, # Redirect back to the main app
+        "metadata": {
+            "user_id": user_id,
+            "user_email": email,
+            "description": "PipWizard Premium Subscription (Test)"
+        }
+    }
+    
     try:
-        r = requests.post(url, headers=headers, json=payload).json()
-        if r.get("status"): return r["data"]["authorization_url"], r["data"]["reference"]
-        st.error(r.get("message")); return None, None
-    except Exception as e:
-        st.error(e); return None, None
-
-def verify_payment(ref):
-    if not (db and "PAYSTACK_TEST" in st.secrets): st.error("Service unavailable."); return False
-    url = f"https://api.paystack.co/transaction/verify/{ref}"
-    headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
-    try:
-        r = requests.get(url, headers=headers).json()
-        if r.get("status") and r["data"]["status"] == "success":
-            uid = r["data"]["metadata"].get("user_id")
-            if uid:
-                db.child("users").child(uid).update({"subscription_status": "premium"})
-                st.session_state.is_premium = True
-                st.success("Premium activated!"); st.balloons()
-                st.session_state.page = "app"
-                st.query_params.clear()
-                st.rerun()
-            return True
-        st.error("Payment failed."); return False
-    except Exception as e:
-        st.error(e); return False
-
-# ==============================================================
-# 5. LOGIN PAGE
-# ==============================================================
-if st.session_state.page == "login":
-    st.set_page_config(page_title="Login – PipWizard", page_icon="Chart", layout="centered")
-    if not (auth and db): st.title("PipWizard"); st.error("Init failed."); st.stop()
-    st.title("Welcome to PipWizard")
-    action = st.radio("Action", ("Login", "Sign Up"), horizontal=True, index=1)
-    email = st.text_input("Email")
-    pwd = st.text_input("Password", type="password")
-    if action == "Sign Up":
-        confirm = st.text_input("Confirm Password", type="password")
-        if st.button("Sign Up"):
-            if pwd != confirm: st.error("Passwords don’t match.")
-            elif not email or not pwd: st.error("Fill all fields.")
-            else: sign_up(email, pwd)
-    if action == "Login":
-        if st.button("Login"):
-            if not email or not pwd: st.error("Fill all fields.")
-            else: login(email, pwd)
-
-# ==============================================================
-# 6. PROFILE PAGE
-# ==============================================================
-elif st.session_state.page == "profile":
-    st.set_page_config(page_title="Profile – PipWizard", page_icon="Chart", layout="centered")
-    st.title("Profile & Subscription")
-    if st.session_state.user: st.write(f"Logged in as: `{st.session_state.user['email']}`")
-    if st.session_state.is_premium: st.success("Premium Active")
-    else:
-        st.warning("Free Tier")
-        if st.button("Upgrade (100 NGN test)", type="primary"):
-            with st.spinner("Connecting…"):
-                url, _ = create_payment_link(st.session_state.user["email"], st.session_state.user["localId"])
-                if url:
-                    st.markdown(f"[Pay Now]({url})", unsafe_allow_html=True)
-                    components.html(f'<meta http-equiv="refresh" content="0; url={url}">', height=0)
-    if st.button("Back to App"): st.session_state.page = "app"; st.rerun()
-    if st.button("Logout"): logout()
-
-# ==============================================================
-# 7. MAIN APP
-# ==============================================================
-elif st.session_state.page == "app" and st.session_state.user:
-    st.set_page_config(page_title="PipWizard", page_icon="Chart", layout="wide")
-
-    # ---- payment callback ----
-    if "trxref" in st.query_params:
-        with st.spinner("Verifying…"):
-            verify_payment(st.query_params["trxref"])
-
-    # ---- config ----
-    ALL_PAIRS = ["EUR/USD","GBP/USD","USD/JPY","USD/CAD","AUD/USD","NZD/USD",
-                 "EUR/GBP","EUR/JPY","GBP/JPY","USD/CHF"]
-    FREE_PAIR = "EUR/USD"
-    INTERVALS = {"1min":"1min","5min":"5min","15min":"15min","30min":"30min","1h":"1h"}
-    OUTPUTSIZE = 500
-
-    # ---- theme ----
-    def toggle_theme():
-        st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-    st.markdown(f"""<style>
-        .stApp {{background:#{'0e1117' if st.session_state.theme=='dark' else 'ffffff'};
-                 color:#{'f0f0f0' if st.session_state.theme=='dark' else '212529'};}}
-    </style>""", unsafe_allow_html=True)
-
-    col1, col2 = st.columns([6,1])
-    with col1: st.title("PipWizard – Live Forex Signals")
-    with col2:
-        if st.button("Light" if st.session_state.theme=="dark" else "Dark"):
-            toggle_theme(); st.rerun()
-
-    # ---- sidebar ----
-    st.sidebar.title("PipWizard")
-    st.sidebar.write(f"User: `{st.session_state.user['email']}`")
-    premium = st.session_state.is_premium
-    pair = st.sidebar.selectbox("Pair", ALL_PAIRS if premium else [FREE_PAIR])
-    interval = st.sidebar.selectbox("Timeframe", list(INTERVALS.keys()), index=3)
-    strategy = st.sidebar.selectbox("Strategy", [
-        "RSI + SMA Crossover","MACD Crossover","RSI + MACD (Confluence)",
-        "SMA + MACD (Confluence)","RSI Standalone","SMA Crossover Standalone"
-    ])
-    show_rsi = st.sidebar.checkbox("Show RSI", True)
-    show_macd = st.sidebar.checkbox("Show MACD", True)
-
-    rsi_p = st.sidebar.slider("RSI Period",5,30,14)
-    sma_p = st.sidebar.slider("SMA Period",10,50,20)
-    rsi_low = st.sidebar.slider("Buy RSI <",20,40,35)
-    rsi_high = st.sidebar.slider("Sell RSI >",60,80,65)
-    macd_f = st.sidebar.slider("MACD Fast",1,26,12)
-    macd_s = st.sidebar.slider("MACD Slow",13,50,26)
-    macd_sig = st.sidebar.slider("MACD Signal",1,15,9)
-
-    capital = st.sidebar.number_input("Capital ($)",1000,value=10000)
-    risk_pct = st.sidebar.slider("Risk %",0.5,5.0,1.0)/100
-    sl_pips = st.sidebar.number_input("SL (pips)",1,200,50)
-    tp_pips = st.sidebar.number_input("TP (pips)",1,500,100)
-
-    col_run, col_scan, col_clr = st.sidebar.columns(3)
-    run_bt = col_run.button("Backtest", type="primary")
-    run_scan = col_scan.button("Scan All", type="secondary")
-    if st.session_state.backtest_results and col_clr.button("Clear"):
-        st.session_state.backtest_results = None; st.rerun()
-
-    # ---- data fetch ----
-    @st.cache_data(ttl=60)
-    def fetch_data(sym, intv):
-        if "TD_API_KEY" not in st.secrets: return pd.DataFrame()
-        td = TDClient(apikey=st.secrets["TD_API_KEY"])
-        try:
-            ts = td.time_series(symbol=sym, interval=intv, outputsize=OUTPUTSIZE).as_pandas()
-            if ts.empty: return pd.DataFrame()
-            df = ts[['open','high','low','close']].copy()
-            df.index = pd.to_datetime(df.index)
-            return df.iloc[::-1]
-        except: return pd.DataFrame()
-
-    # ---- indicators & strategy ----
-    def add_indicators(df):
-        df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
-        df['sma'] = df['close'].rolling(sma_p).mean()
-        df['macd'], df['macd_sig'], df['macd_hist'] = talib.MACD(df['close'],
-                fastperiod=macd_f, slowperiod=macd_s, signalperiod=macd_sig)
-        return df
-
-    def apply_strategy(df):
-        df['signal'] = 0
-        if strategy == "RSI + SMA Crossover":
-            df.loc[(df['rsi'] < rsi_low) & (df['close'] > df['sma']), 'signal'] = 1
-            df.loc[(df['rsi'] > rsi_high) & (df['close'] < df['sma']), 'signal'] = -1
-        elif strategy == "MACD Crossover":
-            df.loc[(df['macd'] > df['macd_sig']) & (df['macd'].shift(1) <= df['macd_sig'].shift(1)), 'signal'] = 1
-            df.loc[(df['macd'] < df['macd_sig']) & (df['macd'].shift(1) >= df['macd_sig'].shift(1)), 'signal'] = -1
-        elif strategy == "RSI + MACD (Confluence)":
-            df.loc[(df['rsi'] < rsi_low) & (df['macd'] > df['macd_sig']) &
-                   (df['macd'].shift(1) <= df['macd_sig'].shift(1)), 'signal'] = 1
-            df.loc[(df['rsi'] > rsi_high) & (df['macd'] < df['macd_sig']) &
-                   (df['macd'].shift(1) >= df['macd_sig'].shift(1)), 'signal'] = -1
-        elif strategy == "SMA + MACD (Confluence)":
-            df.loc[(df['close'] > df['sma']) & (df['macd'] > df['macd_sig']) &
-                   (df['macd'].shift(1) <= df['macd_sig'].shift(1)), 'signal'] = 1
-            df.loc[(df['close'] < df['sma']) & (df['macd'] < df['macd_sig']) &
-                   (df['macd'].shift(1) >= df['macd_sig'].shift(1)), 'signal'] = -1
-        elif strategy == "RSI Standalone":
-            df.loc[(df['rsi'] < rsi_low) & (df['rsi'].shift(1) >= rsi_low), 'signal'] = 1
-            df.loc[(df['rsi'] > rsi_high) & (df['rsi'].shift(1) <= rsi_high), 'signal'] = -1
-        elif strategy == "SMA Crossover Standalone":
-            df.loc[(df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1)), 'signal'] = 1
-            df.loc[(df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1)), 'signal'] = -1
-        return df
-
-    # ---- backtest ----
-    def backtest(df_in, pair, capital, risk, sl, tp):
-        df = df_in.copy(); trades = []
-        pip = 0.01 if "JPY" in pair else 0.0001
-        risk_usd = capital * risk
-        reward_usd = risk_usd * (tp / sl)
-        for idx, row in df[df['signal'] != 0].iterrows():
-            entry_i = df.index.get_loc(idx) + 1
-            if entry_i >= len(df): continue
-            entry_price = df.iloc[entry_i]['open']
-            sl_price = entry_price - sl*pip if row['signal']==1 else entry_price + sl*pip
-            tp_price = entry_price + tp*pip if row['signal']==1 else entry_price - tp*pip
-            result, pl, exit = 'OPEN', 0.0, None
-            for j in range(entry_i+1, len(df)):
-                bar = df.iloc[j]
-                if row['signal']==1:
-                    if bar['low'] <= sl_price: result, pl, exit = 'LOSS', -risk_usd, bar.name; break
-                    if bar['high'] >= tp_price: result, pl, exit = 'WIN', reward_usd, bar.name; break
-                else:
-                    if bar['high'] >= sl_price: result, pl, exit = 'LOSS', -risk_usd, bar.name; break
-                    if bar['low'] <= tp_price: result, pl, exit = 'WIN', reward_usd, bar.name; break
-            if result == 'OPEN': result, pl, exit = 'UNRESOLVED', 0.0, df.index[-1]
-            trades.append({"entry": df.iloc[entry_i].name, "exit": exit,
-                           "type": "BUY" if row['signal']==1 else "SELL",
-                           "entry_price": entry_price, "sl": sl_price, "tp": tp_price,
-                           "result": result, "pl": pl})
-        if not trades: return 0,0,0,0,capital,pd.DataFrame(),pd.DataFrame()
-        log = pd.DataFrame(trades).set_index('entry')
-        res = log[log['result'].isin(['WIN','LOSS'])].copy()
-        if res.empty: return 0,0,0,0,capital,log,res
-        wins = len(res[res['result']=='WIN'])
-        total = len(res)
-        profit = res['pl'].sum()
-        gross_win = res[res['pl']>0]['pl'].sum()
-        gross_loss = abs(res[res['pl']<0]['pl'].sum())
-        pf = gross_win/gross_loss if gross_loss else 999.0
-        final = capital + profit
-        res['equity'] = capital + res['pl'].cumsum()
-        return total, wins/total, profit, pf, final, log, res
-
-    # ---- SCANNER ----
-    def run_scanner():
-        results = []
-        for p in ALL_PAIRS:
-            df = fetch_data(p, INTERVALS[interval])
-            if df.empty or len(df) < 50: continue
-            df = add_indicators(df)
-            df = apply_strategy(df)
-            df = df.dropna()
-            if df.empty: continue
-            signals = df[df['signal'] != 0]
-            if signals.empty: continue
-            last_sig = signals.iloc[-1]
-            sig_type = "BUY" if last_sig['signal'] == 1 else "SELL"
-            results.append({
-                "Pair": p,
-                "Signal": sig_type,
-                "Time": last_sig.name.strftime("%H:%M"),
-                "RSI": f"{last_sig['rsi']:.1f}",
-                "Price": f"{last_sig['close']:.5f}"
-            })
-        return pd.DataFrame(results).sort_values("Pair")
-
-    # ---- load main pair ----
-    with st.spinner("Fetching candles…"):
-        df = fetch_data(pair, INTERVALS[interval])
-    if df.empty: st.error("No data."); st.stop()
-
-    df = add_indicators(df)
-    df = apply_strategy(df)
-    df = df.dropna()
-    if df.empty: st.warning("Not enough data."); st.stop()
-
-    # ==============================================================
-    # MAIN CANDLESTICK CHART – FIXED (NO .set(), NO .marker())
-    # ==============================================================
-    st.markdown("---")
-    st.subheader(f"**{pair}** – **{interval}** – {len(df)} candles")
-
-    # Prepare OHLC
-    df_lw = df.reset_index()
-    ts_col = df_lw.columns[0]
-    df_lw['time'] = (df_lw[ts_col].astype('int64') // 1_000_000_000).astype(int)
-    ohlc = df_lw[['time','open','high','low','close']].to_dict('records')
-
-    # Create chart with data directly
-    chart = StreamlitChart(
-        ohlc,
-        width=1000,
-        height=500,
-        layout={
-            "backgroundColor": "#0e1117" if st.session_state.theme == "dark" else "#ffffff",
-            "textColor": "#f0f0f0" if st.session_state.theme == "dark" else "#212529"
-        },
-        grid={
-            "vertLines": {"color": "#444" if st.session_state.theme == "dark" else "#ddd"},
-            "horzLines": {"color": "#444" if st.session_state.theme == "dark" else "#ddd"}
-        },
-        time_scale={"timeVisible": True, "secondsVisible": False}
-    )
-
-    # Buy/Sell markers via Plotly overlay (lightweight-charts has no .marker())
-    buy = df[df['signal'] == 1].reset_index()
-    sell = df[df['signal'] == -1].reset_index()
-    buy['time'] = (buy.iloc[:, 0].astype('int64') // 1_000_000_000).astype(int)
-    sell['time'] = (sell.iloc[:, 0].astype('int64') // 1_000_000_000).astype(int)
-
-    overlay = go.Figure()
-    if not buy.empty:
-        overlay.add_scatter(x=buy['time'], y=buy['low'] * 0.999, mode='markers',
-                            marker=dict(symbol='arrow-up', size=14, color='#26a69a'), name='BUY')
-    if not sell.empty:
-        overlay.add_scatter(x=sell['time'], y=sell['high'] * 1.001, mode='markers',
-                            marker=dict(symbol='arrow-down', size=14, color='#ef5350'), name='SELL')
-    overlay.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-        height=500, margin=dict(l=0,r=0,t=0,b=0)
-    )
-    st.plotly_chart(overlay, use_container_width=True, config={'displayModeBar': False})
-
-    # ==============================================================
-    # RSI & MACD – Plotly
-    # ==============================================================
-    if show_rsi:
-        st.markdown("---"); st.subheader("RSI")
-        fig_rsi = go.Figure()
-        fig_rsi.add_scatter(x=df.index, y=df['rsi'], name="RSI", line=dict(color="#ff9800"))
-        fig_rsi.add_hline(y=rsi_high, line_dash="dash", line_color="#ef5350")
-        fig_rsi.add_hline(y=rsi_low, line_dash="dash", line_color="#26a69a")
-        fig_rsi.update_layout(height=200,
-                              template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
-        st.plotly_chart(fig_rsi, use_container_width=True)
-
-    if show_macd:
-        st.markdown("---"); st.subheader("MACD")
-        fig_macd = go.Figure()
-        fig_macd.add_scatter(x=df.index, y=df['macd'], name="MACD", line=dict(color="#2196f3"))
-        fig_macd.add_scatter(x=df.index, y=df['macd_sig'], name="Signal", line=dict(color="#ff9800"))
-        fig_macd.add_bar(x=df.index, y=df['macd_hist'], name="Histogram",
-                         marker_color=np.where(df['macd_hist']>=0, '#26a69a', '#ef5350'))
-        fig_macd.update_layout(height=200,
-                              template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
-        st.plotly_chart(fig_macd, use_container_width=True)
-
-    # ==============================================================
-    # SCANNER
-    # ==============================================================
-    if run_scan:
-        with st.spinner("Scanning all pairs..."):
-            scanner_df = run_scanner()
-            st.session_state.scanner_results = scanner_df
-        st.rerun()
-
-    if st.session_state.scanner_results is not None:
-        st.markdown("---")
-        st.subheader("Strategy Scanner – Live Signals")
-        if st.session_state.scanner_results.empty:
-            st.info("No signals across all pairs.")
+        response = requests.post(url, headers=headers, json=payload)
+        response_data = response.json()
+        
+        if response_data.get("status"):
+            auth_url = response_data["data"]["authorization_url"]
+            reference = response_data["data"]["reference"]
+            return auth_url, reference
         else:
-            st.dataframe(
-                st.session_state.scanner_results.style.apply(
-                    lambda row: ['background: #d4edda' if row['Signal']=='BUY' else 'background: #f8d7da'], axis=1
-                ),
-                use_container_width=True
-            )
+            st.error(f"Paystack error: {response_data.get('message')}")
+            return None, None
+    except Exception as e:
+        st.error(f"Error creating payment link: {e}")
+        return None, None
 
-    # ==============================================================
-    # BACKTEST
-    # ==============================================================
-    if run_bt:
-        with st.spinner("Backtesting…"):
-            total, wr, profit, pf, final, log, res = backtest(df, pair, capital, risk_pct, sl_pips, tp_pips)
-            st.session_state.backtest_results = {
-                "total":total, "wr":wr, "profit":profit, "pf":pf, "final":final,
-                "log":log, "res":res, "pair":pair, "intv":interval
-            }
-        st.rerun()
+def verify_payment(reference):
+    """
+    Calls Paystack to verify a transaction reference.
+    """
+    if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
+        st.error("Services not initialized.")
+        return False
 
-    if st.session_state.backtest_results:
-        r = st.session_state.backtest_results
-        st.markdown("---"); st.subheader("Backtest Results")
-        c1,c2,c3,c4 = st.columns(4)
-        c1.metric("Trades", r["total"])
-        c2.metric("Win Rate", f"{r['wr']:.1%}")
-        c3.metric("Profit $", f"{r['profit']:,.0f}")
-        c4.metric("Profit Factor", f"{r['pf']:.2f}")
-        if not r["res"].empty:
-            eq = go.Figure()
-            eq.add_scatter(x=r["res"].index, y=r["res"]['equity'], mode='lines', line=dict(color='#26a69a'))
-            eq.update_layout(height=300,
-                             template='plotly_dark' if st.session_state.theme=="dark" else 'plotly_white')
-            st.plotly_chart(eq, use_container_width=True)
-        st.dataframe(r["log"])
+    try:
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
+        
+        response = requests.get(url, headers=headers)
+        response_data = response.json()
 
-    # ---- auto-refresh ----
-    components.html("<meta http-equiv='refresh' content='61'>", height=0)
+        if response_data.get("status") and response_data["data"]["status"] == "success":
+            st.success("Payment successful! Your account is now Premium.")
+            
+            metadata = response_data["data"].get("metadata", {})
+            user_id = metadata.get("user_id")
+            
+            if user_id:
+                # Update user's status in Firebase
+                db.child("users").child(user_id).update({"subscription_status": "premium"})
+                st.session_state.is_premium = True
+                st.balloons()
+                st.session_state.page = "app" # Go back to the main app
+                
+                try:
+                    st.query_params.clear()
+                except:
+                    pass 
+                
+                st.rerun()
+            else:
+                st.error("Could not find user_id in payment metadata. Please contact support.")
+            return True
+        else:
+            st.error("Payment verification failed. Please try again or contact support.")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error verifying payment: {e}")
+        return False
 
-# ==============================================================
-# FALLBACK
-# ==============================================================
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import requests
+import json
+import time
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from datetime import datetime, timedelta, timezone
+from threading import Thread
+import websocket
+import pyrebase
+
+# Optional indicator libs
+try:
+    import talib
+    _HAS_TALIB = True
+except Exception:
+    _HAS_TALIB = False
+
+# -------------------- Basic Config --------------------
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "USD/CHF", "NZD/USD", "XAU/USD", "BTC/USD"]
+DEFAULT_PAIR = "EUR/USD"
+UPDATE_INTERVAL = 5  # seconds between UI redraws
+PRICE_HISTORY_MAX = 1200  # max ticks to keep
+
+# -------------------- Helpers for indicators --------------------
+def simple_sma(series, window):
+    return series.rolling(window=window).mean()
+
+def simple_rsi(series, window=14):
+    delta = series.diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ma_up = up.ewm(com=(window-1), adjust=False).mean()
+    ma_down = down.ewm(com=(window-1), adjust=False).mean()
+    rs = ma_up / ma_down
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+def simple_macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd = ema_fast - ema_slow
+    macd_signal = macd.ewm(span=signal, adjust=False).mean()
+    macd_hist = macd - macd_signal
+    return macd, macd_signal, macd_hist
+
+# -------------------- TwelveData WebSocket streamer --------------------
+def build_ws_url(pair, apikey):
+    sym = pair.replace("/", "")
+    return f"wss://ws.twelvedata.com/v1/quotes/price?symbol={sym}&apikey={apikey}"
+
+def start_price_stream(pair, apikey):
+    ws_key = "td_stream_thread"
+    if ws_key in st.session_state and st.session_state.get("td_stream_pair") == pair and st.session_state.get(ws_key):
+        return
+
+    st.session_state["td_stream_stop"] = True
+    time.sleep(0.2)
+    st.session_state["td_stream_stop"] = False
+    st.session_state["td_stream_pair"] = pair
+
+    url = build_ws_url(pair, apikey)
+
+    def _on_message(ws, message):
+        try:
+            data = json.loads(message)
+            if "price" in data:
+                price = float(data["price"])
+                now = datetime.utcnow().replace(tzinfo=timezone.utc)
+                new = pd.DataFrame({"time":[now], "price":[price]})
+                if "price_df" not in st.session_state:
+                    st.session_state.price_df = new
+                else:
+                    st.session_state.price_df = pd.concat([st.session_state.price_df, new])
+                    if len(st.session_state.price_df) > PRICE_HISTORY_MAX:
+                        st.session_state.price_df = st.session_state.price_df.tail(PRICE_HISTORY_MAX)
+        except Exception as e:
+            print("ws message parse error:", e)
+
+    def _on_error(ws, err):
+        print("WebSocket error:", err)
+
+    def _on_close(ws, close_status_code, close_msg):
+        print("WebSocket closed.", close_status_code, close_msg)
+
+    def _on_open(ws):
+        print("WebSocket connection opened. Streaming", pair)
+
+    def run_ws():
+        while not st.session_state.get("td_stream_stop", False):
+            try:
+                ws = websocket.WebSocketApp(url, on_message=_on_message, on_error=_on_error, on_close=_on_close, on_open=_on_open)
+                ws.run_forever(ping_interval=20, ping_timeout=10)
+            except Exception as e:
+                print("WebSocket run error:", e)
+            for _ in range(5):
+                if st.session_state.get("td_stream_stop", False):
+                    break
+                time.sleep(1)
+        print("Price stream thread exiting.")
+
+    t = Thread(target=run_ws, daemon=True)
+    t.start()
+    st.session_state["td_stream_thread"] = True
+
+def fetch_last_price_rest(pair, apikey):
+    sym = pair.replace("/", "")
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={sym}&interval=1min&outputsize=1&format=json&apikey={apikey}"
+        r = requests.get(url, timeout=8)
+        r.raise_for_status()
+        j = r.json()
+        if "values" in j and len(j["values"])>0:
+            v = j["values"][0]
+            price = float(v["close"])
+            now = datetime.utcnow().replace(tzinfo=timezone.utc)
+            return now, price
+    except Exception as e:
+        print("REST fallback error:", e)
+    return None, None
+
+# -------------------- Streamlit App Layout --------------------
+st.set_page_config(page_title="PipWizard", layout="wide")
+if 'user' not in st.session_state:
+    st.session_state.user = None
+if 'is_premium' not in st.session_state:
+    st.session_state.is_premium = False
+if 'page' not in st.session_state:
+    st.session_state.page = "login"
+
+# ===== LOGIN / SIGNUP UI =====
+if st.session_state.page == "login":
+    st.title("PipWizard 💹")
+    st.write("Please log in to continue.")
+    
+    # Check for payment verification in query params
+    query_params = st.query_params
+    if "trxref" in query_params and "reference" in query_params:
+        reference = query_params["reference"]
+        with st.spinner("Verifying your payment, please wait..."):
+            verify_payment(reference)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            if not email or not password:
+                st.error("Please enter email and password.")
+            else:
+                login(email, password)
+    with col2:
+        st.write("New here?")
+        su_email = st.text_input("Sign up email", key="su_email")
+        su_pass = st.text_input("Sign up password", type="password", key="su_pass")
+        su_pass2 = st.text_input("Confirm password", type="password", key="su_pass2")
+        if st.button("Sign Up"):
+            if not su_email or not su_pass or not su_pass2:
+                st.error("Fill all fields")
+            elif su_pass != su_pass2:
+                st.error("Passwords do not match")
+            else:
+                sign_up(su_email, su_pass)
+
+# ===== MAIN APP AFTER LOGIN: show live chart immediately =====
+elif st.session_state.page == "app" and st.session_state.user:
+    st.title("PipWizard – Live Dashboard")
+    st.sidebar.header("Controls")
+    user_email = st.session_state.user.get("email", "User")
+    user_id = st.session_state.user.get("localId")
+    st.sidebar.write(f"Logged in as: {user_email}")
+    is_premium = st.session_state.is_premium
+
+    # --- Premium Upgrade Sidebar ---
+    if not is_premium:
+        st.sidebar.warning("You are on the Free plan.")
+        if st.sidebar.button("Upgrade to Premium"):
+            with st.spinner("Creating payment link..."):
+                auth_url, ref = create_payment_link(user_email, user_id)
+                if auth_url:
+                    st.sidebar.markdown(f"**[Click here to pay]({auth_url})**")
+                    st.sidebar.info("After paying, return to this page. Your account will be upgraded.")
+                else:
+                    st.sidebar.error("Could not create payment link. Please try again.")
+    else:
+        st.sidebar.success("You are a Premium user! ✨")
+    
+    if st.sidebar.button("Logout"):
+        logout()
+
+    # Pair selector and refresh settings
+    pair = st.sidebar.selectbox("Select Pair", PAIRS, index=PAIRS.index(DEFAULT_PAIR))
+    refresh_choice = st.sidebar.selectbox("Update interval (seconds)", [1,2,5,10], index=2)
+    apikey = st.secrets.get("TWELVEDATA", {}).get("API_KEY", None)
+    if not apikey:
+        st.sidebar.error("TwelveData API key missing. Add TWELVEDATA.API_KEY to Streamlit Secrets.")
+        st.stop()
+
+    st.session_state["live_refresh_interval"] = int(refresh_choice)
+
+    # start streamer for selected pair
+    if "price_df" not in st.session_state:
+        st.session_state.price_df = pd.DataFrame(columns=["time","price"])
+
+    start_price_stream(pair, apikey)
+
+    # ===== FIX 1: Clear old data when the pair changes =====
+    if "current_chart_pair" not in st.session_state or st.session_state.current_chart_pair != pair:
+        st.session_state.price_df = pd.DataFrame(columns=["time","price"]) # Clear old data!
+        st.session_state.current_chart_pair = pair # Set the new pair
+    # ========================================================
+
+    # seed via REST if WS slow
+    seed_wait_seconds = 3
+    if len(st.session_state.price_df) == 0:
+        t0 = time.time()
+        with st.spinner(f"Connecting to {pair} stream..."):
+            while time.time() - t0 < seed_wait_seconds and len(st.session_state.price_df) == 0:
+                now, price = fetch_last_price_rest(pair, apikey)
+                if price is not None:
+                    st.session_state.price_df = pd.DataFrame({"time":[now], "price":[price]})
+                    break
+                time.sleep(0.5)
+
+    # Live chart placeholder
+    placeholder = st.empty()
+
+    # Main live update loop
+    while True:
+        df = st.session_state.price_df.copy()
+        if df.empty:
+            placeholder.info("Waiting for live ticks...")
+            time.sleep(st.session_state.get("live_refresh_interval", UPDATE_INTERVAL))
+            continue
+
+        df['time'] = pd.to_datetime(df['time'])
+        df = df.sort_values('time').drop_duplicates(subset='time').reset_index(drop=True)
+
+        # ===== FIX 2: Only calculate indicators if we have enough data =====
+        # MACD (26) is the slowest, so we use that as the threshold.
+        if len(df) > 27:
+            df['sma20'] = simple_sma(df['price'], 20)
+            if _HAS_TALIB:
+                try:
+                    df['rsi'] = talib.RSI(df['price'].values, timeperiod=14)
+                    macd_line, macd_signal, macd_hist = talib.MACD(df['price'].values, fastperiod=12, slowperiod=26, signalperiod=9)
+                    df['macd_line'] = macd_line
+                    df['macd_signal'] = macd_signal
+                    df['macd_hist'] = macd_hist
+                except Exception:
+                    df['rsi'] = simple_rsi(df['price'], 14)
+                    df['macd_line'], df['macd_signal'], df['macd_hist'] = simple_macd(df['price'])
+            else:
+                df['rsi'] = simple_rsi(df['price'], 14)
+                df['macd_line'], df['macd_signal'], df['macd_hist'] = simple_macd(df['price'])
+
+            buys = df[df['rsi'] < 30]
+            sells = df[df['rsi'] > 70]
+        
+        # If we don't have enough data, create empty columns/DataFrames
+        # so the rest of the plotting code doesn't fail
+        else:
+            df['sma20'] = np.nan
+            df['rsi'] = np.nan
+            df['macd_line'] = np.nan
+            df['macd_signal'] = np.nan
+            df['macd_hist'] = np.nan
+            buys = pd.DataFrame()
+            sells = pd.DataFrame()
+        # ===================================================================
+
+        # build figure
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6,0.2,0.2], vertical_spacing=0.03,
+                            specs=[[{"type":"scatter"}],[{"type":"scatter"}],[{"type":"bar"}]])
+        
+        # --- Plot 1: Price + SMA + Signals ---
+        fig.add_trace(go.Scatter(x=df['time'], y=df['price'], mode='lines', name='Price', line=dict(color='#00bcd4')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df['time'], y=df['sma20'], mode='lines', name='SMA20', line=dict(color='#ff9800')), row=1, col=1)
+        if not buys.empty:
+            fig.add_trace(go.Scatter(x=buys['time'], y=buys['price'], mode='markers', name='Buy', marker=dict(symbol='triangle-up', color='#26a69a', size=10)), row=1, col=1)
+        if not sells.empty:
+            fig.add_trace(go.Scatter(x=sells['time'], y=sells['price'], mode='markers', name='Sell', marker=dict(symbol='triangle-down', color='#ef5350', size=10)), row=1, col=1)
+
+        # --- Plot 2: RSI ---
+        fig.add_trace(go.Scatter(x=df['time'], y=df['rsi'], mode='lines', name='RSI(14)', line=dict(color='#9c27b0')), row=2, col=1)
+        fig.add_hline(y=70, line_dash='dash', line_color='#ef5350', row=2, col=1)
+        fig.add_hline(y=30, line_dash='dash', line_color='#26a69a', row=2, col=1)
+        fig.update_yaxes(range=[0,100], row=2, col=1)
+
+        # --- Plot 3: MACD ---
+        colors = ['#26a69a' if v>=0 else '#ef5350' for v in df['macd_hist'].fillna(0)]
+        fig.add_trace(go.Bar(x=df['time'], y=df['macd_hist'], name='MACD Histogram', marker_color=colors), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df['time'], y=df['macd_signal'], mode='lines', name='MACD Signal', line=dict(color='#ff9800')), row=3, col=1)
+        fig.add_trace(go.Scatter(x=df['time'], y=df['macd_line'], mode='lines', name='MACD', line=dict(color='#2196f3')), row=3, col=1)
+
+        fig.update_layout(template='plotly_dark', showlegend=True, height=700, margin=dict(l=10,r=10,t=40,b=10))
+        fig.update_xaxes(rangeslider_visible=False)
+
+        placeholder.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+        # The redundant pair-switching check at the end of the loop has been removed.
+        # Streamlit's natural rerun behavior handles this.
+
+        time.sleep(st.session_state.get("live_refresh_interval", UPDATE_INTERVAL))
+
+# ===== If user not logged in properly =====
 else:
-    st.error("Please log in.")
+    st.title("PipWizard 💹")
+    st.error("You must be logged in to view the dashboard. Please log in.")
+    # Check for payment verification in query params on login page too
+    query_params = st.query_params
+    if "trxref" in query_params and "reference" in query_params:
+        reference = query_params["reference"]
+        with st.spinner("Verifying your payment, please wait..."):
+            verify_payment(reference)
+            if st.session_state.page == "app": # if verify_payment logs us in
+                st.rerun() # Rerun to show the app
