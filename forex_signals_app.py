@@ -656,8 +656,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     ]
     
     # 2. LOAD DATA INTO THE CHART
-    # --- FIX: Use chart.set() to load the main DataFrame ---
-    chart.set(df_chart)
+    # --- FIX: chart.set() returns the series object ---
+    candle_series = chart.set(df_chart)
     
     # Create and set the SMA line
     sma_line = chart.create_line(
@@ -668,7 +668,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     # --- FINAL FIX: Use .set() and pass the DataFrame with the 'sma' column ---
     sma_line.set(sma_data)
     
-    chart.set_markers(buy_markers + sell_markers)
+    # --- FIX: Call set_markers() on the series, not the chart ---
+    candle_series.set_markers(buy_markers + sell_markers)
 
     # 3. RENDER THE CHART
     chart.load(width=1000, height=500)
