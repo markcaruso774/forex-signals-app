@@ -654,6 +654,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # 2. LOAD DATA INTO THE CHART
     # --- THIS IS THE FINAL, CORRECTED BLOCK ---
+    # --- Use add_series() to create the series first ---
     candle_series = chart.add_series(
         series_type='candlestick',
         up_color="#26a69a",
@@ -662,6 +663,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         wick_up_color="#26a69a",
         wick_down_color="#ef5350",
     )
+    # --- Then set data on the series ---
     candle_series.set(df_chart)
     
     # Create and set the SMA line
@@ -672,9 +674,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
-    # Set markers on the candlestick series
+    # --- Set markers on the candlestick series ---
     candle_series.set_markers(buy_markers + sell_markers)
-    # --- END OF FIX ---
 
     # 3. RENDER THE CHART
     chart.load(width=1000, height=500)
@@ -825,7 +826,7 @@ elif not st.session_state.user:
     st.title("PipWizard 💹")
     st.error("Application failed to initialize.")
     st.warning("Could not connect to the authentication service.")
-    st.info("This may be due to missing Streamlit Secrets or. Please contact the administrator.")
+    st.info("This. Please contact the administrator.")
     st.code(f"""
     Error Details:
     Auth object: {'Initialized' if auth else 'Failed'}
