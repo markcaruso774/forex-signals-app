@@ -631,10 +631,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     index_col_name = df_reset.columns[0]
     df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**9).astype(int) 
     
-    # --- FIX: Rename columns for the library ---
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
-    
-    # --- FINAL FIX: Pass a DataFrame to .set() and match the name ---
     sma_data = df_reset[['time', 'sma']].dropna() # Keep 'sma' column
     
     buy_signals = df[df['signal'] == 1].reset_index()
@@ -656,19 +653,26 @@ elif st.session_state.page == "app" and st.session_state.user:
     ]
     
     # 2. LOAD DATA INTO THE CHART
-    # --- FIX: chart.set() returns the series object ---
-    candle_series = chart.set(df_chart)
+    # --- FINAL FIX: Create the series, then set data and markers ---
+    candle_series = chart.create_series(
+        series_type='candlestick',
+        up_color="#26a69a",
+        down_color="#ef5350",
+        border_visible=False,
+        wick_up_color="#26a69a",
+        wick_down_color="#ef5350",
+    )
+    candle_series.set(df_chart)
     
     # Create and set the SMA line
     sma_line = chart.create_line(
-        name="sma",  # <-- FINAL FIX: Match the column name 'sma'
+        name="sma",  # Match the column name 'sma'
         color="#ff9800",
         width=2
     )
-    # --- FINAL FIX: Use .set() and pass the DataFrame with the 'sma' column ---
     sma_line.set(sma_data)
     
-    # --- FIX: Call set_markers() on the series, not the chart ---
+    # --- FINAL FIX: Set markers on the candle_series object ---
     candle_series.set_markers(buy_markers + sell_markers)
 
     # 3. RENDER THE CHART
