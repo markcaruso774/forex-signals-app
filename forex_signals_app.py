@@ -497,7 +497,78 @@ elif st.session_state.page == "app" and st.session_state.user:
             df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
         elif strategy_name == "SMA + MACD (Confluence)":
             buy_cond_1 = (df['close'] > df['sma'])
-            buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].sheet(df, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
+            # --- SYNTAX ERROR FIX ---
+            buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
+            df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
+            sell_cond_1 = (df['close'] < df['sma'])
+            sell_cond_2 = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
+            df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
+        elif strategy_name == "RSI Standalone":
+            buy_cond = (df['rsi'] < rsi_l) & (df['rsi'].shift(1) >= rsi_l)
+            sell_cond = (df['rsi'] > rsi_h) & (df['rsi'].shift(1) <= rsi_h)
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
+        elif strategy_name == "SMA Crossover Standalone":
+            buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
+            sell_cond = (df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1))
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
+        return df
+
+    # === (FIXED) BACKTESTING FUNCTION ===
+    def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
+        df = df_in.copy(); trades = []
+        if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
+        else: PIP_MULTIPLIER = 0.0001
+        RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER; REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
+        MAX_RISK_USD = initial_capital * risk_per_trade; REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
+        signal_bars = df[df['signal'] != 0]
+        for i in range(len(signal_bars)):
+            signal_row, signal_type = signal_bars.iloc[i], signal_bars.iloc[i]['signal']
+            try: signal_index = df.index.get_loc(signal_row.name)
+            except KeyError: continue
+            if signal_index + 1 >= len(df): continue
+            entry_bar, entry_price, entry_time = df.iloc[signal_index + 1], df.iloc[signal_index + 1]['open'], df.iloc[signal_index + 1].name
+            stop_loss, take_profit = (entry_price - RISK_PIPS_VALUE, entry_price + REWARD_PIPS_VALUE) if signal_type == 1 else (entry_price + RISK_PIPS_VALUE, entry_price - REWARD_PIPS_VALUE)
+            result, profit_loss, exit_time = 'OPEN', 0.0, None
+            for j in range(signal_index + 2, len(df)):
+                future_bar = df.iloc[j]
+                if signal_type == 1:
+                    if future_bar['low'] <= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
+                    elif future_bar['high'] >= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+                elif signal_type == -1:
+                    if future_bar['high'] >= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
+                    elif future_bar['low'] <= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+            if result == 'OPEN': result, profit_loss, exit_time = 'UNRESOLVED', 0.0, df.iloc[-1].name
+            trades.append({"entry_time": entry_time, "exit_time": exit_time, "signal": "BUY" if signal_type == 1 else "SELL", "entry_price": entry_price, "stop_loss": stop_loss, "take_profit": take_profit, "result": result, "profit_loss": profit_loss})
+        if not trades: return 0, 0, 0, 0, initial_capital, pd.DataFrame(), pd.DataFrame() 
+        trade_log = pd.DataFrame(trades).set_index('entry_time')
+        resolved_trades = trade_log[trade_log['result'].isin(['WIN', 'LOSS'])].copy()
+        if resolved_trades.empty: return 0, 0, 0, 0, initial_capital, trade_log, resolved_trades
+        total_trades, winning_trades = len(resolved_trades), len(resolved_trades[resolved_trades['result'] == 'WIN'])
+        total_profit, win_rate = resolved_trades['profit_loss'].sum(), winning_trades / total_trades
+        gross_win, gross_loss = resolved_trades[resolved_trades['profit_loss'] > 0]['profit_loss'].sum(), abs(resolved_trades[resolved_trades['profit_loss'] < 0]['profit_loss'].sum())
+        profit_factor = gross_win / gross_loss if gross_loss > 0 else 999.0
+        final_capital = initial_capital + total_profit
+        resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
+        return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_log, resolved_trades
+
+    # === DATA LOADING & MAIN CHART LOGIC ===
+    with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
+        df = fetch_data(selected_pair, INTERVALS[selected_interval])
+    if df.empty:
+        st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
+    with st.spinner("Calculating indicators..."):
+        df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+    with st.spinner(f"Applying Strategy: {strategy_name}..."):
+        df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high)
+    df = df.dropna()
+    if df.empty:
+        st.warning("Waiting for sufficient data after indicator calculation..."); st.stop()
+
+    # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
+    if run_backtest_button:
+        with st.spinner("Running backtest on real market data..."):
+            total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
+                df, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
             )
             st.session_state.backtest_results = {
                 "total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit,
