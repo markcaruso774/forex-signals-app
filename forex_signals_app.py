@@ -653,8 +653,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     ]
     
     # 2. LOAD DATA INTO THE CHART
-    # --- FINAL FIX: Create the series, then set data and markers ---
-    candle_series = chart.create_series(
+    # --- THIS IS THE FINAL, CORRECTED BLOCK ---
+    candle_series = chart.add_series(
         series_type='candlestick',
         up_color="#26a69a",
         down_color="#ef5350",
@@ -672,8 +672,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
-    # --- FINAL FIX: Set markers on the candle_series object ---
+    # Set markers on the candlestick series
     candle_series.set_markers(buy_markers + sell_markers)
+    # --- END OF FIX ---
 
     # 3. RENDER THE CHART
     chart.load(width=1000, height=500)
