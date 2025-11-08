@@ -634,8 +634,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     # --- FIX: Rename columns for the library ---
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
     
-    # --- ATTRIBUTE ERROR FIX: Pass a DataFrame to .set() ---
-    sma_data = df_reset[['time', 'sma']].dropna().rename(columns={'sma': 'value'})
+    # --- FINAL FIX: Pass a DataFrame to .set() and match the name ---
+    sma_data = df_reset[['time', 'sma']].dropna() # Keep 'sma' column
     
     buy_signals = df[df['signal'] == 1].reset_index()
     sell_signals = df[df['signal'] == -1].reset_index()
@@ -661,11 +661,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # Create and set the SMA line
     sma_line = chart.create_line(
-        name="SMA",
+        name="sma",  # <-- FINAL FIX: Match the column name 'sma'
         color="#ff9800",
         width=2
     )
-    # --- ATTRIBUTE ERROR FIX: Use .set() and pass the DataFrame ---
+    # --- FINAL FIX: Use .set() and pass the DataFrame with the 'sma' column ---
     sma_line.set(sma_data)
     
     chart.set_markers(buy_markers + sell_markers)
