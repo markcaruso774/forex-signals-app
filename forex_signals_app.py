@@ -668,7 +668,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     sma_line.set(sma_data)
     
     # 3. Set the markers on the chart
-    chart.markers(buy_markers + sell_markers)
+    # --- FIX: The method is .markers() NOT .set_markers() ---
+    chart.markers = buy_markers + sell_markers
     # --- END OF FIX ---
 
     # 3. RENDER THE CHART
