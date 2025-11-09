@@ -599,8 +599,10 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
-        # --- FIX: Replaced use_container_width ---
-        st.dataframe(results['trade_df'], width='stretch') 
+        
+        # --- FIX: Replaced width='stretch' with use_container_width=True ---
+        st.dataframe(results['trade_df'], use_container_width=True) 
+        
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
@@ -612,7 +614,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     # Set chart options based on theme
     chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
     
-    chart = StreamlitChart()
+    # === *** CHART ERROR FIX *** ===
+    # 1. Initialize the chart WITH width and height
+    chart = StreamlitChart(width=1000, height=500)
     
     # Set options as attributes
     chart.layout_options = {
@@ -673,7 +677,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     # --- END OF FIX ---
 
     # 3. RENDER THE CHART
-    chart.load(width=1000, height=500)
+    # === *** CHART ERROR FIX *** ===
+    # 2. Call .load() with NO arguments
+    chart.load()
 
     # --- SUBPLOTS (RSI / MACD) ---
     # --- REVERTED TO PLOTLY: The library doesn't support subplots well ---
@@ -786,14 +792,14 @@ elif st.session_state.page == "app" and st.session_state.user:
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
                         
-                        # --- FIX: Replaced use_container_width ---
+                        # --- FIX: Replaced width='stretch' with use_container_width=True ---
                         st.dataframe(
                             results_df.style
                                 .applymap(style_profit, subset=['Total Profit ($)'])
                                 .apply(lambda x: [style_win_rate(v) for v in x], subset=['Win Rate (%)'])
                                 .applymap(style_profit_factor, subset=['Profit Factor'])
                                 .format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}),
-                            width='stretch'
+                            use_container_width=True
                         )
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
@@ -829,3 +835,4 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
+
