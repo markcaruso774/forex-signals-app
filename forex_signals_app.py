@@ -599,10 +599,8 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
-        
-        # --- FIX: Replaced use_container_width=True with width='stretch' ---
+        # --- FIX: Replaced use_container_width with width='stretch' ---
         st.dataframe(results['trade_df'], width='stretch') 
-        
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
@@ -614,8 +612,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     # Set chart options based on theme
     chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
     
-    # === *** CHART ERROR FIX *** ===
-    # 1. Initialize the chart WITH width and height
+    # --- FIX: Moved width/height to initialization ---
     chart = StreamlitChart(width=1000, height=500)
     
     # Set options as attributes
@@ -628,10 +625,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
     }
     chart.price_scale_options = {"borderColor": "#777"}
-    
-    # --- FIX 2: Remove timeVisible: True ---
-    # This lets the chart automatically show dates (when zoomed out) 
-    # and times (when zoomed in), fixing the "squished" axis.
+    # --- FIX: Removed timeVisible: True ---
     chart.time_scale_options = {"borderColor": "#777"}
 
 
@@ -639,10 +633,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_reset = df.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # --- FINAL FIX: Reverting to Unix Seconds (not Milliseconds) ---
-    # The library expects timestamps in seconds (/10**9), not milliseconds (/10**6).
-    # My previous advice was incorrect. This reverts that change.
-    df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**9).astype(int)
+    # --- FINAL FIX: Convert all time data to ISO string format ---
+    # The numeric timestamps (seconds, milliseconds) are not being
+    # interpreted correctly by the chart.
+    # We will use a full ISO string (YYYY-MM-DDTHH:MM:SS) for all data.
+    df_reset['time'] = df_reset[index_col_name].apply(lambda x: x.isoformat())
     # --- End of Fix ---
     
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
@@ -654,9 +649,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     buy_index_col = buy_signals.columns[0]
     sell_index_col = sell_signals.columns[0]
     
-    # --- FINAL FIX: Reverting marker time to Unix seconds ---
-    buy_signals['time'] = (buy_signals[buy_index_col].astype(int) / 10**9).astype(int)
-    sell_signals['time'] = (sell_signals[sell_index_col].astype(int) / 10**9).astype(int)
+    # --- FINAL FIX: Convert marker time to ISO string as well ---
+    buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: x.isoformat())
+    sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: x.isoformat())
 
     buy_markers = [
         {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
@@ -669,11 +664,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # 2. LOAD DATA INTO THE CHART
     
-    # --- REVERTING FIX: 'create_candlestick_series' was incorrect ---
-    # The library automatically detects candlestick data from the
-    # 'open', 'high', 'low', 'close' columns in the dataframe.
-    
-    # 1. Set the main candlestick data
+    # --- FIX: Reverted to chart.set() which is correct ---
     chart.set(df_chart)
     
     # 2. Create the SMA line and set its data
@@ -685,13 +676,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     sma_line.set(sma_data)
     
     # 3. Set the markers on the chart
-    # --- FIX: The method is .markers() NOT .set_markers() ---
     chart.markers = buy_markers + sell_markers
-    # --- END OF FIX ---
 
     # 3. RENDER THE CHART
-    # === *** CHART ERROR FIX *** ===
-    # 2. Call .load() with NO arguments
+    # --- FIX: Removed width/height from here ---
     chart.load()
 
     # --- SUBPLOTS (RSI / MACD) ---
@@ -805,7 +793,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
                         
-                        # --- FIX: Replaced use_container_width=True with width='stretch' ---
+                        # --- FIX: Replaced use_container_width with width='stretch' ---
                         st.dataframe(
                             results_df.style
                                 .applymap(style_profit, subset=['Total Profit ($)'])
