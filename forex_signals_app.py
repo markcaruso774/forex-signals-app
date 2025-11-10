@@ -600,8 +600,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         else: st.info("No resolved trades found with these settings.")
         st.subheader("Detailed Trade Log")
         
-        # --- FIX: Replaced width='stretch' with use_container_width=True ---
-        st.dataframe(results['trade_df'], use_container_width=True) 
+        # --- FIX: Replaced use_container_width=True with width='stretch' ---
+        st.dataframe(results['trade_df'], width='stretch') 
         
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
@@ -628,7 +628,11 @@ elif st.session_state.page == "app" and st.session_state.user:
         "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"},
     }
     chart.price_scale_options = {"borderColor": "#777"}
-    chart.time_scale_options = {"borderColor": "#777", "timeVisible": True}
+    
+    # --- FIX 2: Remove timeVisible: True ---
+    # This lets the chart automatically show dates (when zoomed out) 
+    # and times (when zoomed in), fixing the "squished" axis.
+    chart.time_scale_options = {"borderColor": "#777"}
 
 
     # 1. PREPARE THE DATA
@@ -660,8 +664,17 @@ elif st.session_state.page == "app" and st.session_state.user:
     # 2. LOAD DATA INTO THE CHART
     
     # --- FINAL, RESEARCHED FIX ---
-    # 1. Set the main candlestick data
-    chart.set(df_chart)
+    
+    # --- FIX 1: Explicitly create and set the Candlestick series ---
+    # chart.set(df_chart) was ambiguous. This tells the chart to draw candles.
+    candle_series = chart.create_candlestick_series(
+        up_color="#26a69a",
+        down_color="#ef5350",
+        border_visible=False,
+        wick_up_color="#26a69a",
+        wick_down_color="#ef5350"
+    )
+    candle_series.set(df_chart)
     
     # 2. Create the SMA line and set its data
     sma_line = chart.create_line(
@@ -792,14 +805,14 @@ elif st.session_state.page == "app" and st.session_state.user:
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
                         
-                        # --- FIX: Replaced width='stretch' with use_container_width=True ---
+                        # --- FIX: Replaced use_container_width=True with width='stretch' ---
                         st.dataframe(
                             results_df.style
                                 .applymap(style_profit, subset=['Total Profit ($)'])
                                 .apply(lambda x: [style_win_rate(v) for v in x], subset=['Win Rate (%)'])
                                 .applymap(style_profit_factor, subset=['Profit Factor'])
                                 .format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}),
-                            use_container_width=True
+                            width='stretch'
                         )
                     else:
                         st.info("Scan completed, but no trades were found with these settings.")
@@ -835,4 +848,3 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
-
