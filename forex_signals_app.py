@@ -639,10 +639,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_reset = df.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # --- FIX: Convert time back to a numeric Unix timestamp ---
-    # The 'YYYY-MM-DD' string format was mismatching the marker timestamps
-    # and breaking the chart. We must use a numeric timestamp for all data.
-    df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**9).astype(int)
+    # --- FINAL FIX: Convert to JavaScript Milliseconds (not Unix Seconds) ---
+    # Pandas uses nanoseconds. The JS chart expects milliseconds.
+    # We were dividing by 10**9 (to get seconds), but we must divide by 10**6.
+    df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**6).astype(int)
     # --- End of Fix ---
     
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
@@ -654,8 +654,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     buy_index_col = buy_signals.columns[0]
     sell_index_col = sell_signals.columns[0]
     
-    buy_signals['time'] = (buy_signals[buy_index_col].astype(int) / 10**9).astype(int)
-    sell_signals['time'] = (sell_signals[sell_index_col].astype(int) / 10**9).astype(int)
+    # --- FINAL FIX: Convert marker time to milliseconds as well ---
+    buy_signals['time'] = (buy_signals[buy_index_col].astype(int) / 10**6).astype(int)
+    sell_signals['time'] = (sell_signals[sell_index_col].astype(int) / 10**6).astype(int)
 
     buy_markers = [
         {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
