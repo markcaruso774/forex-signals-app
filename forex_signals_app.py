@@ -639,11 +639,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_reset = df.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # --- FIX: Convert time to YYYY-MM-DD string format ---
-    # The numeric timestamp conversion was causing the X-axis to compress.
-    # The chart library also accepts 'YYYY-MM-DD' strings, which is more reliable.
-    # We know this column is a datetime object because of the fetch_data function.
-    df_reset['time'] = df_reset[index_col_name].dt.strftime('%Y-%m-%d')
+    # --- FIX: Convert time back to a numeric Unix timestamp ---
+    # The 'YYYY-MM-DD' string format was mismatching the marker timestamps
+    # and breaking the chart. We must use a numeric timestamp for all data.
+    df_reset['time'] = (df_reset[index_col_name].astype(int) / 10**9).astype(int)
     # --- End of Fix ---
     
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
