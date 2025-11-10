@@ -309,7 +309,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        # --- Added styles for calendar table ---
+        # --- Removed calendar styles ---
         return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
@@ -325,38 +325,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 font-size: 0.9em;
                 color: {'#bbb' if dark else '#333'};
             }}
-            
-            /* --- Calendar Styles --- */
-            .calendar-table {{
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 0.9em;
-                background-color: {'#1a1c20' if dark else '#f9f9f9'};
-            }}
-            .calendar-table th, .calendar-table td {{
-                padding: 12px 10px;
-                text-align: left;
-                border-bottom: 1px solid {'#333' if dark else '#ddd'};
-            }}
-            .calendar-table th {{
-                background-color: {'#2c3038' if dark else '#f0f0f0'};
-                font-weight: bold;
-                color: {'#f0f0f0' if dark else '#212529'};
-            }}
-            .calendar-table tr:hover {{
-                background-color: {'#2c3038' if dark else '#f0f0f0'};
-            }}
-            .impact-High {{
-                color: #ef5350;
-                font-weight: bold;
-            }}
-            .impact-Medium {{
-                color: #ff9800;
-                font-weight: 500;
-            }}
-            .impact-Low {{
-                color: {'#bbb' if dark else '#555'};
-            }}
+            /* Removed calendar table CSS */
             .actual-good {{ color: #26a69a; font-weight: bold; }}
             .actual-bad {{ color: #ef5350; font-weight: bold; }}
             .actual-neutral {{ color: {'#f0f0f0' if dark else '#212529'}; font-weight: bold; }}
@@ -810,89 +779,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     if is_premium:
         check_for_live_signal(df, selected_pair)
 
-    # --- NEW: ECONOMIC CALENDAR SECTION ---
+    # --- ECONOMIC CALENDAR SECTION (REMOVED) ---
     st.markdown("---")
-    st.subheader("Upcoming Economic Events")
-
-    @st.cache_data(ttl=1800) # Cache for 30 minutes
-    def fetch_calendar_data():
-        """Fetches economic calendar data from FMP."""
-        if "FMP_API_KEY" not in st.secrets:
-            st.error("FMP_API_KEY not found in Streamlit Secrets. Cannot load calendar.")
-            return None
-        
-        API_KEY = st.secrets["FMP_API_KEY"]
-        
-        try:
-            # Get today's date and one week from now
-            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-            one_week = (datetime.now(timezone.utc) + timedelta(days=7)).strftime('%Y-%m-%d')
-            
-            url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={today}&to={one_week}&apikey={API_KEY}"
-            response = requests.get(url)
-            response.raise_for_status() # Raise error for bad response
-            data = response.json()
-            
-            if isinstance(data, list) and len(data) > 0:
-                df = pd.DataFrame(data)
-                # Select and rename columns for display
-                df = df[['date', 'country', 'event', 'impact', 'previous', 'estimate', 'actual']]
-                df['date'] = pd.to_datetime(df['date'])
-                # Filter for relevant currencies
-                currencies = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'NZD', 'CHF']
-                df = df[df['country'].isin(currencies)].sort_values(by='date')
-                return df
-            else:
-                return pd.DataFrame() # Return empty frame if no data
-                
-        except Exception as e:
-            st.error(f"Error fetching calendar data: {e}")
-            return None
-
-    def style_calendar_table(df):
-        """Applies custom HTML/CSS to the calendar dataframe."""
-        if df is None or df.empty:
-            st.info("No major economic events found for the next 7 days.")
-            return
-
-        html = "<table class='calendar-table'><thead><tr>"
-        headers = ["Time (UTC)", "Currency", "Event", "Impact", "Actual", "Forecast", "Previous"]
-        for h in headers:
-            html += f"<th>{h}</th>"
-        html += "</tr></thead><tbody>"
-
-        for _, row in df.iterrows():
-            # Format time
-            time_str = row['date'].strftime('%Y-%m-%d %H:%M')
-            
-            # Style Impact
-            impact_class = f"impact-{row['impact']}"
-            
-            # Style Actual
-            actual_val = row['actual']
-            actual_class = "actual-neutral"
-            if pd.notna(actual_val) and pd.notna(row['estimate']):
-                if actual_val > row['estimate']: actual_class = "actual-good"
-                elif actual_val < row['estimate']: actual_class = "actual-bad"
-            
-            html += "<tr>"
-            html += f"<td>{time_str}</td>"
-            html += f"<td>{row['country']}</td>"
-            html += f"<td>{row['event']}</td>"
-            html += f"<td class='{impact_class}'>{row['impact']}</td>"
-            html += f"<td class='{actual_class}'>{actual_val if pd.notna(actual_val) else '---'}</td>"
-            html += f"<td>{row['estimate'] if pd.notna(row['estimate']) else '---'}</td>"
-            html += f"<td>{row['previous'] if pd.notna(row['previous']) else '---'}</td>"
-            html += "</tr>"
-            
-        html += "</tbody></table>"
-        st.markdown(html, unsafe_allow_html=True)
-
-    # Fetch and display the calendar
-    calendar_df = fetch_calendar_data()
-    style_calendar_table(calendar_df)
-    # --- END OF ECONOMIC CALENDAR SECTION ---
-
+    
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
@@ -909,8 +798,11 @@ elif st.session_state.page == "app" and st.session_state.user:
             
             col1, col2, col3 = st.columns(3)
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
-            scan_intervals = col2.multilselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
-            scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
+            
+            # --- FIX: Corrected typo 'multilselect' to 'multiselect' ---
+            scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
+            
+            scan_strategies = col3.multiseflect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
             scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
             
