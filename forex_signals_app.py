@@ -690,7 +690,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.1,
+        vertical_spacing=0.3,
         row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
@@ -713,7 +713,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         
     if show_rsi or show_macd:
         fig_subplots.update_layout(
-            height=260 * (current_row - 1),
+            height=280 * (current_row - 1),
             template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
             xaxis_rangeslider_visible=False,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
