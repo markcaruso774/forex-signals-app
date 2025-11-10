@@ -663,18 +663,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # 2. LOAD DATA INTO THE CHART
     
-    # --- FINAL, RESEARCHED FIX ---
+    # --- REVERTING FIX: 'create_candlestick_series' was incorrect ---
+    # The library automatically detects candlestick data from the
+    # 'open', 'high', 'low', 'close' columns in the dataframe.
     
-    # --- FIX 1: Explicitly create and set the Candlestick series ---
-    # chart.set(df_chart) was ambiguous. This tells the chart to draw candles.
-    candle_series = chart.create_candlestick_series(
-        up_color="#26a69a",
-        down_color="#ef5350",
-        border_visible=False,
-        wick_up_color="#26a69a",
-        wick_down_color="#ef5350"
-    )
-    candle_series.set(df_chart)
+    # 1. Set the main candlestick data
+    chart.set(df_chart)
     
     # 2. Create the SMA line and set its data
     sma_line = chart.create_line(
