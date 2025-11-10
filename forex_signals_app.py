@@ -713,7 +713,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         
     if show_rsi or show_macd:
         fig_subplots.update_layout(
-            height=200 * (current_row - 1),
+            height=260 * (current_row - 1),
             template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
             xaxis_rangeslider_visible=False,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -738,8 +738,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "MACD Crossover",
                 "RSI + MACD (Confluence)",
                 "SMA + MACD (Confluence)",
-                "RSI Standalone",
-                "SMA Crossover Standalone"
+                "RSI Crossover",
+                "SMA Crossover"
             ]
             
             col1, col2, col3 = st.columns(3)
