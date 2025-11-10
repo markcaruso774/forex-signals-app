@@ -690,7 +690,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.5,
+        vertical_spacing=0.6,
         row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
@@ -738,8 +738,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "MACD Crossover",
                 "RSI + MACD (Confluence)",
                 "SMA + MACD (Confluence)",
-                "RSI Crossover",
-                "SMA Crossover"
+                "RSI Standalone",
+                "SMA Crossover Standalone"
             ]
             
             col1, col2, col3 = st.columns(3)
