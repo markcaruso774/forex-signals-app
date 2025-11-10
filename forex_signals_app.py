@@ -24,7 +24,6 @@ def initialize_firebase():
         
         config = st.secrets["FIREBASE_CONFIG"]
         
-        # Auto-set databaseURL if not present (common issue)
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
@@ -57,14 +56,12 @@ if 'page' not in st.session_state:
 
 # === 3. AUTHENTICATION FUNCTIONS ===
 def sign_up(email, password):
-    """Signs up a new user with Firebase Auth and adds them to Realtime DB."""
     if auth is None or db is None:
         st.error("Auth service not available. Contact support.")
         return
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        # Create a user profile in the database
         user_data = {"email": email, "subscription_status": "free"}
         db.child("users").child(user['localId']).set(user_data)
         st.session_state.is_premium = False
@@ -73,22 +70,19 @@ def sign_up(email, password):
     except Exception as e:
         error_message = "An unknown error occurred."
         try:
-            # Try to parse the JSON error message from Firebase
             error_json = e.args[1]
             error_message = json.loads(error_json).get('error', {}).get('message', error_message)
         except:
-            pass # Fallback to default error message
+            pass
         st.error(f"Failed to create account: {error_message}")
 
 def login(email, password):
-    """Logs in an existing user and fetches their subscription status."""
     if auth is None or db is None:
         st.error("Auth service not available. Contact support.")
         return
     try:
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        # Get user's subscription status from the database
         user_data = db.child("users").child(user['localId']).get().val()
         if user_data and user_data.get("subscription_status") == "premium":
             st.session_state.is_premium = True
@@ -99,28 +93,25 @@ def login(email, password):
     except Exception as e:
         error_message = "An unknown error occurred."
         try:
-            # Try to parse the JSON error message from Firebase
             error_json = e.args[1]
             error_message = json.loads(error_json).get('error', {}).get('message', error_message)
         except:
-             pass # Fallback to default error message
+             pass
         st.error(f"Login Failed: {error_message}")
 
 def logout():
-    """Logs out the user and resets session state."""
     st.session_state.user = None
     st.session_state.is_premium = False
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS ===
+# === 4. PAYSTACK PAYMENT FUNCTIONS (TYPO FIXED) ===
 def create_payment_link(email, user_id):
     """
     Calls Paystack API to create a one-time payment link.
     """
     
-    # Test amount: 100 NGN (in kobo)
-    test_amount_kobo = 10000 
+    test_amount_kobo = 10000 # 100 NGN * 100 kobo
     
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
@@ -132,7 +123,6 @@ def create_payment_link(email, user_id):
         "Content-Type": "application/json"
     }
     
-    # Get the app's URL for the callback
     if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
         st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
         st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
@@ -175,6 +165,7 @@ def verify_payment(reference):
         return False
 
     try:
+        # --- SYNTAX ERROR FIX ---
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
@@ -195,7 +186,6 @@ def verify_payment(reference):
                 st.balloons()
                 st.session_state.page = "app" # Go back to the main app
                 
-                # Clear query params to prevent re-verification on refresh
                 try:
                     st.query_params.clear()
                 except:
@@ -269,7 +259,6 @@ elif st.session_state.page == "profile":
                 
                 if auth_url:
                     st.info("Redirecting you to Paystack to complete your payment...")
-                    # Redirect using Markdown and JS
                     st.markdown(f'If you are not redirected, [**Click Here to Pay**]({auth_url})', unsafe_allow_html=True)
                     components.html(f'<meta http-equiv="refresh" content="0; url={auth_url}">', height=0)
                 else:
@@ -287,7 +276,7 @@ elif st.session_state.page == "profile":
 elif st.session_state.page == "app" and st.session_state.user:
     st.set_page_config(page_title="PipWizard", page_icon="💹", layout="wide")
 
-    # --- Check for Payment Callback ---
+    # --- NEW: Check for Payment Callback ---
     query_params = st.query_params
     if "trxref" in query_params:
         reference = query_params["trxref"]
@@ -309,7 +298,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        # --- Removed calendar styles ---
         return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
@@ -325,7 +313,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 font-size: 0.9em;
                 color: {'#bbb' if dark else '#333'};
             }}
-            /* Removed calendar table CSS */
             .actual-good {{ color: #26a69a; font-weight: bold; }}
             .actual-bad {{ color: #ef5350; font-weight: bold; }}
             .actual-neutral {{ color: {'#f0f0f0' if dark else '#212529'}; font-weight: bold; }}
@@ -417,10 +404,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
+    # --- LOGIC CHANGE: Min capital set to 100 ---
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
     risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
-    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') 
+    
+    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') # Default is 100
     
     if sl_pips <= 0 or tp_pips <= 0: st.sidebar.error("SL and TP must be greater than 0."); st.stop()
     
@@ -453,11 +442,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.page = "profile"
         st.rerun()
     
-    # === HELPER FUNCTIONS (Alerts & Data) ===
-    
-    @st.cache_data(ttl=60) # Cache for 60 seconds
+    # === HELPER FUNCTIONS (Alerts) ===
+    @st.cache_data(ttl=60)
     def fetch_data(symbol, interval):
-        """Fetches candle data from Twelve Data."""
         if "TD_API_KEY" not in st.secrets:
             st.error("TD_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
         td = TDClient(apikey=st.secrets["TD_API_KEY"])
@@ -467,40 +454,32 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.error(f"No data returned for {symbol}."); return pd.DataFrame()
             df = ts[['open', 'high', 'low', 'close']].copy()
             df.index = pd.to_datetime(df.index)
-            return df.iloc[::-1] # Reverse to get ascending time
+            return df.iloc[::-1]
         except Exception as e:
             st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
 
     def send_alert_email(signal_type, price, pair):
-        """Placeholder for sending a live signal alert."""
         st.sidebar.markdown(f"**ALERT SENT**")
         st.sidebar.warning(f"**{signal_type.upper()}** on {pair} at {price:.5f}")
 
     def check_for_live_signal(df, pair):
-        """Checks the latest bar for a new signal and triggers an alert."""
         if len(df) < 2: return
         latest_bar, current_bar = df.iloc[-2], df.iloc[-1]
         signal, price = latest_bar['signal'], current_bar['open']
-        
-        if 'last_alert_time' not in st.session_state: 
-            st.session_state.last_alert_time = None
-            
+        if 'last_alert_time' not in st.session_state: st.session_state.last_alert_time = None
         if signal != 0 and latest_bar.name != st.session_state.last_alert_time:
             st.session_state.last_alert_time = latest_bar.name
             if signal == 1: send_alert_email("BUY", price, pair)
             elif signal == -1: send_alert_email("SELL", price, pair)
 
-    # === INDICATOR & STRATEGY LOGIC ===
-    
+    # === INDICATOR & STRATEGY LOGIC (ACCEPTING PARAMS) ===
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
-        """Calculates all indicators and adds them to the DataFrame."""
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
         df['macd_line'], df['macd_signal'], df['macd_hist'] = talib.MACD(df['close'], fastperiod=macd_f, slowperiod=macd_sl, signalperiod=macd_sig)
         return df
 
     def apply_strategy(df, strategy_name, rsi_l, rsi_h):
-        """Applies the selected trading strategy logic to the DataFrame."""
         df['signal'] = 0
         if strategy_name == "RSI + SMA Crossover":
             df.loc[(df['rsi'] < rsi_l) & (df['close'] > df['sma']), 'signal'] = 1
@@ -518,6 +497,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
         elif strategy_name == "SMA + MACD (Confluence)":
             buy_cond_1 = (df['close'] > df['sma'])
+            # --- SYNTAX ERROR FIX ---
             buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
             df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
             sell_cond_1 = (df['close'] < df['sma'])
@@ -533,82 +513,42 @@ elif st.session_state.page == "app" and st.session_state.user:
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         return df
 
-    # === BACKTESTING FUNCTION ===
+    # === (FIXED) BACKTESTING FUNCTION ===
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
-        """Runs the vector-based backtest on the strategy-applied DataFrame."""
         df = df_in.copy(); trades = []
-        
-        # Determine pip value
         if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
         else: PIP_MULTIPLIER = 0.0001
-        
-        RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER
-        REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
-        
-        # Calculate position size (fixed risk)
-        MAX_RISK_USD = initial_capital * risk_per_trade
-        REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
-        
+        RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER; REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
+        MAX_RISK_USD = initial_capital * risk_per_trade; REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
         signal_bars = df[df['signal'] != 0]
-        
         for i in range(len(signal_bars)):
             signal_row, signal_type = signal_bars.iloc[i], signal_bars.iloc[i]['signal']
-            
             try: signal_index = df.index.get_loc(signal_row.name)
             except KeyError: continue
-            
-            if signal_index + 1 >= len(df): continue # Signal on last bar
-            
-            entry_bar = df.iloc[signal_index + 1]
-            entry_price, entry_time = entry_bar['open'], entry_bar.name
-            
-            if signal_type == 1: # BUY
-                stop_loss = entry_price - RISK_PIPS_VALUE
-                take_profit = entry_price + REWARD_PIPS_VALUE
-            else: # SELL
-                stop_loss = entry_price + RISK_PIPS_VALUE
-                take_profit = entry_price - REWARD_PIPS_VALUE
-                
+            if signal_index + 1 >= len(df): continue
+            entry_bar, entry_price, entry_time = df.iloc[signal_index + 1], df.iloc[signal_index + 1]['open'], df.iloc[signal_index + 1].name
+            stop_loss, take_profit = (entry_price - RISK_PIPS_VALUE, entry_price + REWARD_PIPS_VALUE) if signal_type == 1 else (entry_price + RISK_PIPS_VALUE, entry_price - REWARD_PIPS_VALUE)
             result, profit_loss, exit_time = 'OPEN', 0.0, None
-            
-            # Look into the future for exit
             for j in range(signal_index + 2, len(df)):
                 future_bar = df.iloc[j]
-                if signal_type == 1: # BUY
-                    if future_bar['low'] <= stop_loss: 
-                        result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
-                    elif future_bar['high'] >= take_profit: 
-                        result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
-                elif signal_type == -1: # SELL
-                    if future_bar['high'] >= stop_loss: 
-                        result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
-                    elif future_bar['low'] <= take_profit: 
-                        result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
-                        
-            if result == 'OPEN': # If trade is still open at the end
-                result, profit_loss, exit_time = 'UNRESOLVED', 0.0, df.iloc[-1].name
-                
+                if signal_type == 1:
+                    if future_bar['low'] <= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
+                    elif future_bar['high'] >= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+                elif signal_type == -1:
+                    if future_bar['high'] >= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
+                    elif future_bar['low'] <= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+            if result == 'OPEN': result, profit_loss, exit_time = 'UNRESOLVED', 0.0, df.iloc[-1].name
             trades.append({"entry_time": entry_time, "exit_time": exit_time, "signal": "BUY" if signal_type == 1 else "SELL", "entry_price": entry_price, "stop_loss": stop_loss, "take_profit": take_profit, "result": result, "profit_loss": profit_loss})
-        
         if not trades: return 0, 0, 0, 0, initial_capital, pd.DataFrame(), pd.DataFrame() 
-        
         trade_log = pd.DataFrame(trades).set_index('entry_time')
         resolved_trades = trade_log[trade_log['result'].isin(['WIN', 'LOSS'])].copy()
-        
         if resolved_trades.empty: return 0, 0, 0, 0, initial_capital, trade_log, resolved_trades
-            
-        total_trades = len(resolved_trades)
-        winning_trades = len(resolved_trades[resolved_trades['result'] == 'WIN'])
-        total_profit = resolved_trades['profit_loss'].sum()
-        win_rate = winning_trades / total_trades
-        
-        gross_win = resolved_trades[resolved_trades['profit_loss'] > 0]['profit_loss'].sum()
-        gross_loss = abs(resolved_trades[resolved_trades['profit_loss'] < 0]['profit_loss'].sum())
+        total_trades, winning_trades = len(resolved_trades), len(resolved_trades[resolved_trades['result'] == 'WIN'])
+        total_profit, win_rate = resolved_trades['profit_loss'].sum(), winning_trades / total_trades
+        gross_win, gross_loss = resolved_trades[resolved_trades['profit_loss'] > 0]['profit_loss'].sum(), abs(resolved_trades[resolved_trades['profit_loss'] < 0]['profit_loss'].sum())
         profit_factor = gross_win / gross_loss if gross_loss > 0 else 999.0
-        
         final_capital = initial_capital + total_profit
         resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
-        
         return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_log, resolved_trades
 
     # === DATA LOADING & MAIN CHART LOGIC ===
@@ -616,13 +556,10 @@ elif st.session_state.page == "app" and st.session_state.user:
         df = fetch_data(selected_pair, INTERVALS[selected_interval])
     if df.empty:
         st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
-    
     with st.spinner("Calculating indicators..."):
         df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
-    
     with st.spinner(f"Applying Strategy: {strategy_name}..."):
         df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high)
-        
     df = df.dropna()
     if df.empty:
         st.warning("Waiting for sufficient data after indicator calculation..."); st.stop()
@@ -633,7 +570,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
                 df, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
             )
-            # Save results to session state to display
             st.session_state.backtest_results = {
                 "total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit,
                 "profit_factor": pf, "final_capital": final_cap, "trade_df": trade_df,
@@ -646,14 +582,14 @@ elif st.session_state.page == "app" and st.session_state.user:
         results = st.session_state.backtest_results
         st.markdown("---"); st.subheader("Backtesting Results (Simulated)")
         st.markdown(f"***Data Tested:*** *{results['pair']}* on *{results['interval']}* interval. *{results['data_len']}* bars.")
-        
         col_t, col_w, col_p, col_f = st.columns(4)
         col_t.metric("Total Trades", results['total_trades'])
         col_w.metric("Win Rate", f"{results['win_rate']:.2%}")
         col_p.metric("Total Profit ($)", f"{results['total_profit']:,.2f}", delta=f"{(results['total_profit']/initial_capital):.2%}")
         col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
-        
         st.subheader("Equity Curve")
+        
+        # --- FIX: Buggy line removed ---
         resolved_df_key = 'resolved_trades_df' 
         
         if resolved_df_key in results and not results[resolved_df_key].empty:
@@ -662,11 +598,9 @@ elif st.session_state.page == "app" and st.session_state.user:
             equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
             st.plotly_chart(equity_fig, use_container_width=True)
         else: st.info("No resolved trades found with these settings.")
-        
         st.subheader("Detailed Trade Log")
         # --- FIX: Replaced use_container_width with width='stretch' ---
         st.dataframe(results['trade_df'], width='stretch') 
-        
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
@@ -675,11 +609,13 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.markdown("---")
     st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df)} Candles")
     
+    # Set chart options based on theme
     chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
     
     # --- FIX: Moved width/height to initialization ---
     chart = StreamlitChart(width=1000, height=500)
     
+    # Set options as attributes
     chart.layout_options = {
         "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff",
         "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529",
@@ -698,7 +634,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     index_col_name = df_reset.columns[0]
     
     # --- FINAL FIX: Convert all time data to ISO string format ---
+    # The numeric timestamps (seconds, milliseconds) are not being
+    # interpreted correctly by the chart.
+    # We will use a full ISO string (YYYY-MM-DDTHH:MM:SS) for all data.
     df_reset['time'] = df_reset[index_col_name].apply(lambda x: x.isoformat())
+    # --- End of Fix ---
     
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
     sma_data = df_reset[['time', 'sma']].dropna() # Keep 'sma' column
@@ -727,6 +667,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     # --- FIX: Reverted to chart.set() which is correct ---
     chart.set(df_chart)
     
+    # 2. Create the SMA line and set its data
     sma_line = chart.create_line(
         name="sma",  # Match the column name 'sma'
         color="#ff9800",
@@ -734,6 +675,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
+    # 3. Set the markers on the chart
     chart.markers = buy_markers + sell_markers
 
     # 3. RENDER THE CHART
@@ -741,6 +683,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     chart.load()
 
     # --- SUBPLOTS (RSI / MACD) ---
+    # --- REVERTED TO PLOTLY: The library doesn't support subplots well ---
+    # We will use our old, reliable Plotly code for the subplots.
+    
     fig_subplots = make_subplots(
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
@@ -775,13 +720,14 @@ elif st.session_state.page == "app" and st.session_state.user:
         )
         st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
 
+
     # === LIVE SIGNAL ALERT CHECK ===
     if is_premium:
         check_for_live_signal(df, selected_pair)
 
-    # --- ECONOMIC CALENDAR SECTION (REMOVED) ---
+    # --- NEWS CALENDAR SECTION (REMOVED) ---
     st.markdown("---")
-    
+
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
@@ -798,13 +744,10 @@ elif st.session_state.page == "app" and st.session_state.user:
             
             col1, col2, col3 = st.columns(3)
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
-            
-            # --- FIX: Corrected typo 'multilselect' to 'multiselect' ---
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
+            scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
-            scan_strategies = col3.multiseflect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
-            
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
+            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100} # <-- TP default is 100
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -827,23 +770,19 @@ elif st.session_state.page == "app" and st.session_state.user:
                                 data_with_signal = apply_strategy(data_with_indicators, strategy, scan_params["rsi_l"], scan_params["rsi_h"])
                                 data_with_signal = data_with_signal.dropna()
                                 if data_with_signal.empty: continue
-                                
                                 total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
                                     data_with_signal, pair, scan_params["capital"], scan_params["risk"],
                                     scan_params["sl"], scan_params["tp"]
                                 )
-                                
                                 if total_trades > 0:
                                     scan_results.append({"Pair": pair, "Timeframe": interval_key, "Strategy": strategy, "Total Profit ($)": total_profit, "Win Rate (%)": win_rate * 100, "Profit Factor": pf, "Total Trades": total_trades})
-                    
                     progress_bar.progress(1.0, text="Scan Complete!")
-                    
                     if scan_results:
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
-                        
                         def style_profit(val):
                             color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0f0'; return f'color: {color}; font-weight: bold;'
                         
+                        # --- FIX: Added NaN check to prevent crash ---
                         def style_win_rate(val):
                             if pd.isna(val):
                                 return 'background-color: #333; color: #888;' # Neutral style for N/A
@@ -879,11 +818,11 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
-    # === AUTO-REFRESH COMPONENT ===
-    # This triggers a full page re-run every 61 seconds.
+    # === AUTO-REFRESH COMPONENT (STILL NEEDED!) ===
+    # This is our "engine" that fetches new data every 60 seconds
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
-# === 8. Error handling for auth/db init failure ===
+# === 6. Error handling for auth/db init failure ===
 elif not st.session_state.user:
     st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
     st.title("PipWizard 💹")
