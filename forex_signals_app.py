@@ -10,6 +10,7 @@ from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & Calendar
+import uuid      # For unique alert IDs
 
 # --- NEW LIBRARY ---
 from lightweight_charts.widgets import StreamlitChart
@@ -98,12 +99,8 @@ def login(email, password):
             else:
                 st.session_state.is_premium = False
 
-            # 2. --- NEW: Load saved settings ---
-            # Get settings dict, or an empty dict if none are saved
+            # 2. Load saved settings
             settings = user_data.get("settings", {}) 
-            
-            # Pre-populate session_state with saved values
-            # Widgets will automatically pick these up via their 'key'
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
             st.session_state.strategy_name = settings.get("strategy_name", "RSI + SMA Crossover")
@@ -115,13 +112,11 @@ def login(email, password):
             st.session_state.macd_slow = settings.get("macd_slow", 26)
             st.session_state.macd_signal = settings.get("macd_signal", 9)
             st.session_state.capital = settings.get("capital", 10000)
-            st.session_state.risk_pct = settings.get("risk_pct", 1.0) # Loads the slider value (e.g., 1.0)
+            st.session_state.risk_pct = settings.get("risk_pct", 1.0)
             st.session_state.sl_pips = settings.get("sl_pips", 50)
             st.session_state.tp_pips = settings.get("tp_pips", 100)
-            # --- END OF NEW SETTINGS LOAD ---
             
         else:
-            # Failsafe if user exists in Auth but not DB
             st.session_state.is_premium = False
 
         st.session_state.page = "app"
@@ -129,11 +124,10 @@ def login(email, password):
     except Exception as e:
         error_message = "An unknown error occurred."
         try:
-            # Try to parse the JSON error message from Firebase
             error_json = e.args[1]
             error_message = json.loads(error_json).get('error', {}).get('message', error_message)
         except:
-             pass # Fallback to default error message
+             pass 
         st.error(f"Login Failed: {error_message}")
 
 def logout():
@@ -148,21 +142,18 @@ def create_payment_link(email, user_id):
     """
     Calls Paystack API to create a one-time payment link.
     """
-    
-    # Test amount: 100 NGN (in kobo)
     test_amount_kobo = 10000 
     
     if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
-    url = "https://api.paystack.co/transaction/initialize"
+    url = "https.api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
         "Content-Type": "application/json"
     }
     
-    # Get the app's URL for the callback
     if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
         st.error("APP_URL is not set in Streamlit Secrets. Cannot create payment link.")
         st.info("Please add `APP_URL = \"https://your-app-name.streamlit.app/\"` to your secrets.")
@@ -205,7 +196,7 @@ def verify_payment(reference):
         return False
 
     try:
-        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        url = f"https.api.paystack.co/transaction/verify/{reference}"
         
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
@@ -225,7 +216,6 @@ def verify_payment(reference):
                 st.balloons()
                 st.session_state.page = "app" # Go back to the main app
                 
-                # Clear query params to prevent re-verification on refresh
                 try:
                     st.query_params.clear()
                 except:
@@ -299,7 +289,6 @@ elif st.session_state.page == "profile":
                 
                 if auth_url:
                     st.info("Redirecting you to Paystack to complete your payment...")
-                    # Redirect using Markdown and JS
                     st.markdown(f'If you are not redirected, [**Click Here to Pay**]({auth_url})', unsafe_allow_html=True)
                     components.html(f'<meta http-equiv="refresh" content="0; url={auth_url}">', height=0)
                 else:
@@ -330,7 +319,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     FREE_PAIR = "EUR/USD"
     PREMIUM_PAIRS = ALL_PAIRS
     INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
-    OUTPUTSIZE = 500
+    OUTPUTSIZE = 500 # Number of candles to fetch
 
     # === THEME ===
     if 'theme' not in st.session_state:
@@ -339,6 +328,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
+        # --- NEW CSS for Alert History Table ---
         return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
@@ -354,9 +344,25 @@ elif st.session_state.page == "app" and st.session_state.user:
                 font-size: 0.9em;
                 color: {'#bbb' if dark else '#333'};
             }}
-            .actual-good {{ color: #26a69a; font-weight: bold; }}
-            .actual-bad {{ color: #ef5350; font-weight: bold; }}
-            .actual-neutral {{ color: {'#f0f0f0' if dark else '#212529'}; font-weight: bold; }}
+            
+            /* Alert History Table Styles */
+            .alert-history-table {{
+                font-size: 0.85em;
+                width: 100%;
+                border-collapse: collapse;
+            }}
+            .alert-history-table th, .alert-history-table td {{
+                padding: 4px 6px;
+                text-align: left;
+                border-bottom: 1px solid {'#444' if dark else '#ddd'};
+            }}
+            .alert-history-table th {{
+                font-weight: bold;
+                color: {'#eee' if dark else '#333'};
+            }}
+            .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
+            .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
+            .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
 
@@ -392,11 +398,13 @@ elif st.session_state.page == "app" and st.session_state.user:
             * **Indicator Config:** Set the parameters for your chosen strategy (e.g., RSI Period).
             * **Backtesting Parameters:** Set your risk management rules (Stop Loss, Take Profit, etc.).
             * **Save My Settings:** Click this to save all your sidebar settings to your account, so they load automatically the next time you log in.
+            * **Alert History:** A new table at the bottom of the sidebar that logs all signals and their outcomes. Click **"Refresh Outcomes"** to check the status of running trades.
 
             **2. The Main Chart (Your "Live" View)**
             * This chart shows you the most recent price data.
-            * The "BUY" and "SELL" arrows show you where your **currently selected strategy** would have generated signals.
-            * This chart automatically refreshes every minute. If a new signal appears on the latest candle, an "ALERT SENT" message will appear in your sidebar.
+            * The "BUY" and "SELL" arrows show you where your **currently selected strategy** has generated signals.
+            * **OHLC Data:** Use your mouse crosshair to hover over any candle to see its Open, High, Low, and Close price.
+            * This chart automatically refreshes every minute. If a new signal appears, it will be saved to your "Alert History."
 
             **3. The Backtesting Report (Your "Test Results")**
             * Click the **"Run Backtest"** button in the sidebar to generate this report.
@@ -406,7 +414,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
             **4. The Strategy Scanner (Premium Feature)**
             * Located at the bottom of the page.
-            * This is a "backtest of backtests." It automatically tests multiple strategies across multiple pairs and timeframes and shows you the best-performing ones in a simple table.
+            * This is a "backtest of backtests." It now uses your **personal sidebar settings** (Capital, SL, TP) to test multiple strategies, giving you a report that matches your trading style.
 
             ---
 
@@ -417,8 +425,9 @@ elif st.session_state.page == "app" and st.session_state.user:
             | **Backtesting Engine** | ✅ Yes | ✅ Yes |
             | **All Strategies** | ✅ Yes | ✅ Yes |
             | **Save Settings** | ✅ Yes | ✅ Yes |
-            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
             | **Live Signal Alerts** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **Alert History Log** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
             | **🚀 Strategy Scanner**| ❌ No | ✅ **Unlocked** |
             
             """
@@ -427,15 +436,13 @@ elif st.session_state.page == "app" and st.session_state.user:
     # === SIDEBAR & CONTROLS ===
     st.sidebar.title("PipWizard")
     
-    user_email = "User"
-    if st.session_state.user and 'email' in st.session_state.user:
-        user_email = st.session_state.user['email']
+    user_id = st.session_state.user['localId']
+    user_email = st.session_state.user.get('email', 'User')
     st.sidebar.write(f"Logged in as: `{user_email}`")
     
     is_premium = st.session_state.is_premium
 
     if is_premium:
-        # --- NEW: Added key="selected_pair" ---
         selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
         st.sidebar.success("Premium Active – All Features Unlocked")
     else:
@@ -443,12 +450,10 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.sidebar.warning("Free Tier: EUR/USD Only")
         st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
 
-    # --- NEW: Added key="selected_interval" ---
     selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"), key="selected_interval")
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Strategy Selection")
-    # --- NEW: Added key="strategy_name" ---
     strategy_name = st.sidebar.selectbox("Choose a Strategy", ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone"], key="strategy_name")
     
     st.sidebar.markdown("---")
@@ -470,8 +475,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
-    # --- FIX: risk_pct key was 'risk_pct', but login logic was 'risk_pct' ---
-    # Kept 'risk_pct' in login, changing slider key to match
     risk_pct_slider = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') 
     risk_pct = risk_pct_slider / 100 # Convert to decimal for backtest
     
@@ -506,12 +509,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     st.sidebar.markdown("---")
     
-    # --- "SAVE SETTINGS" BUTTON ---
     if st.button("Save My Settings", use_container_width=True):
         if st.session_state.user:
-            user_id = st.session_state.user['localId']
-            
-            # Collect all settings from session_state (using .get for safety)
             settings_to_save = {
                 "selected_pair": st.session_state.get("selected_pair", "EUR/USD"),
                 "selected_interval": st.session_state.get("selected_interval", "1h"),
@@ -524,19 +523,15 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "macd_slow": st.session_state.get("macd_slow", 26),
                 "macd_signal": st.session_state.get("macd_signal", 9),
                 "capital": st.session_state.get("capital", 10000),
-                # --- FIX: Save the slider value (e.g., 1.0), not the decimal (0.01) ---
                 "risk_pct": st.session_state.get("risk_pct", 1.0), 
                 "sl_pips": st.session_state.get("sl_pips", 50),
                 "tp_pips": st.session_state.get("tp_pips", 100)
             }
-            
             try:
-                # Save the settings dict to the user's profile in Firebase
                 db.child("users").child(user_id).child("settings").set(settings_to_save)
                 st.sidebar.success("Settings saved successfully!")
             except Exception as e:
                 st.sidebar.error(f"Failed to save settings: {e}")
-    # --- END OF SAVE BUTTON ---
 
     if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button"):
         st.session_state.page = "profile"
@@ -545,13 +540,13 @@ elif st.session_state.page == "app" and st.session_state.user:
     # === HELPER FUNCTIONS (Alerts & Data) ===
     
     @st.cache_data(ttl=60) # Cache for 60 seconds
-    def fetch_data(symbol, interval):
+    def fetch_data(symbol, interval, output_size=OUTPUTSIZE):
         """Fetches candle data from Twelve Data."""
         if "TD_API_KEY" not in st.secrets:
             st.error("TD_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
         td = TDClient(apikey=st.secrets["TD_API_KEY"])
         try:
-            ts = td.time_series(symbol=symbol, interval=interval, outputsize=OUTPUTSIZE).as_pandas()
+            ts = td.time_series(symbol=symbol, interval=interval, outputsize=output_size).as_pandas()
             if ts is None or ts.empty:
                 st.error(f"No data returned for {symbol}."); return pd.DataFrame()
             df = ts[['open', 'high', 'low', 'close']].copy()
@@ -560,24 +555,76 @@ elif st.session_state.page == "app" and st.session_state.user:
         except Exception as e:
             st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
 
-    def send_alert_email(signal_type, price, pair):
-        """Placeholder for sending a live signal alert."""
-        st.sidebar.markdown(f"**ALERT SENT**")
-        st.sidebar.warning(f"**{signal_type.upper()}** on {pair} at {price:.5f}")
+    # --- NEW: DETAILED ALERT FUNCTION ---
+    def send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price):
+        """Saves a new alert to Firebase."""
+        if db is None or user_id is None:
+            return
 
-    def check_for_live_signal(df, pair):
+        alert_id = str(uuid.uuid4())
+        alert_data = {
+            "id": alert_id,
+            "pair": pair,
+            "type": signal_type,
+            "entry_price": f"{entry_price:.5f}",
+            "tp_price": f"{tp_price:.5f}",
+            "sl_price": f"{sl_price:.5f}",
+            "status": "RUNNING",
+            "entry_time": entry_time.isoformat(),
+            "entry_timestamp": int(entry_time.timestamp()) # For sorting
+        }
+        
+        try:
+            # Save the alert to Firebase
+            db.child("users").child(user_id).child("alerts").child(alert_id).set(alert_data)
+            
+            # Show a success message
+            st.sidebar.success(f"New {signal_type} Alert on {pair}!")
+            st.sidebar.markdown(f"""
+            - **Entry:** `{entry_price:.5f}`
+            - **TP:** `{tp_price:.5f}`
+            - **SL:** `{sl_price:.5f}`
+            """)
+        except Exception as e:
+            st.sidebar.error(f"Failed to save alert: {e}")
+
+    # --- NEW: ALERT CHECKER ---
+    def check_for_live_signal(df, pair, tp_pips, sl_pips):
         """Checks the latest bar for a new signal and triggers an alert."""
         if len(df) < 2: return
-        latest_bar, current_bar = df.iloc[-2], df.iloc[-1]
-        signal, price = latest_bar['signal'], current_bar['open']
+        
+        # Check the *second to last* bar for a signal
+        latest_bar = df.iloc[-2]
+        signal = latest_bar['signal']
         
         if 'last_alert_time' not in st.session_state: 
             st.session_state.last_alert_time = None
             
+        # Check if signal is new and hasn't been processed
         if signal != 0 and latest_bar.name != st.session_state.last_alert_time:
             st.session_state.last_alert_time = latest_bar.name
-            if signal == 1: send_alert_email("BUY", price, pair)
-            elif signal == -1: send_alert_email("SELL", price, pair)
+            
+            # Get entry price from the *current* bar's open
+            entry_price = df.iloc[-1]['open']
+            entry_time = df.iloc[-1].name # Timestamp of the current bar
+            signal_type = "BUY" if signal == 1 else "SELL"
+            
+            # Calculate TP/SL
+            if "JPY" in pair: PIP_MULTIPLIER = 0.01
+            else: PIP_MULTIPLIER = 0.0001
+            
+            sl_value = sl_pips * PIP_MULTIPLIER
+            tp_value = tp_pips * PIP_MULTIPLIER
+
+            if signal_type == "BUY":
+                sl_price = entry_price - sl_value
+                tp_price = entry_price + tp_value
+            else: # SELL
+                sl_price = entry_price + sl_value
+                tp_price = entry_price - tp_value
+            
+            # Send the detailed alert
+            send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price)
 
     # === INDICATOR & STRATEGY LOGIC ===
     
@@ -633,6 +680,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER
         REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
         
+        # Check for division by zero
+        if sl_pips == 0: return 0, 0, 0, 0, initial_capital, pd.DataFrame(), pd.DataFrame() 
+        
         MAX_RISK_USD = initial_capital * risk_per_trade
         REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
         
@@ -644,7 +694,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             try: signal_index = df.index.get_loc(signal_row.name)
             except KeyError: continue
             
-            if signal_index + 1 >= len(df): continue # Signal on last bar
+            if signal_index + 1 >= len(df): continue 
             
             entry_bar = df.iloc[signal_index + 1]
             entry_price, entry_time = entry_bar['open'], entry_bar.name
@@ -704,25 +754,28 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
     
     with st.spinner("Calculating indicators..."):
-        df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+        df_indicators = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
     
-    with st.spinner(f"Applying Strategy: {strategy_name}..."):
-        df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high)
-        
-    df = df.dropna()
-    if df.empty:
+    # --- BUG FIX: Run dropna() *before* applying strategy ---
+    df_clean = df_indicators.dropna()
+    if df_clean.empty:
         st.warning("Waiting for sufficient data after indicator calculation..."); st.stop()
-
+        
+    with st.spinner(f"Applying Strategy: {strategy_name}..."):
+        # Apply strategy to the clean data
+        df_final = apply_strategy(df_clean.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
+        # --- End of Bug Fix ---
+        
     # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
     if run_backtest_button:
         with st.spinner("Running backtest on real market data..."):
             total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
-                df, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
+                df_final, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
             )
             st.session_state.backtest_results = {
                 "total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit,
                 "profit_factor": pf, "final_capital": final_cap, "trade_df": trade_df,
-                "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval, "data_len": len(df)
+                "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval, "data_len": len(df_final)
             }
         st.rerun()
 
@@ -757,7 +810,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # === MAIN CHART (LIGHTWEIGHT CHARTS) ===
     st.markdown("---")
-    st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df)} Candles")
+    st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df_final)} Candles")
     
     chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
     
@@ -773,24 +826,30 @@ elif st.session_state.page == "app" and st.session_state.user:
     }
     chart.price_scale_options = {"borderColor": "#777"}
     chart.time_scale_options = {"borderColor": "#777"}
+    
+    # --- NEW: Enable crosshair for OHLC on hover ---
+    chart.crosshair_options = {
+        "mode": 1, # 0=Normal, 1=Magnet
+        "vertLine": {"color": "#C0C0C0", "style": 2, "width": 1},
+        "horzLine": {"color": "#C0C0C0", "style": 2, "width": 1}
+    }
 
     # 1. PREPARE THE DATA
-    df_reset = df.reset_index()
+    # We use df_final here, which has the signals
+    df_reset = df_final.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # Convert all time data to ISO string format
     df_reset['time'] = df_reset[index_col_name].apply(lambda x: x.isoformat())
     
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
     sma_data = df_reset[['time', 'sma']].dropna() 
     
-    buy_signals = df[df['signal'] == 1].reset_index()
-    sell_signals = df[df['signal'] == -1].reset_index()
+    buy_signals = df_final[df_final['signal'] == 1].reset_index()
+    sell_signals = df_final[df_final['signal'] == -1].reset_index()
     
     buy_index_col = buy_signals.columns[0]
     sell_index_col = sell_signals.columns[0]
     
-    # Convert marker time to ISO string as well
     buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: x.isoformat())
     sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: x.isoformat())
 
@@ -813,6 +872,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
+    # --- BUG FIX: This will now have signals to draw ---
     chart.markers = buy_markers + sell_markers
 
     # 3. RENDER THE CHART
@@ -823,13 +883,13 @@ elif st.session_state.page == "app" and st.session_state.user:
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.2, # Increased spacing
+        vertical_spacing=0.2, 
         row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
     current_row = 1
     if show_rsi:
-        fig_subplots.add_trace(go.Scatter(x=df.index, y=df['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
+        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
         fig_subplots.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=current_row, col=1)
         fig_subplots.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=current_row, col=1)
         fig_subplots.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
@@ -837,16 +897,16 @@ elif st.session_state.page == "app" and st.session_state.user:
         current_row += 1
         
     if show_macd:
-        fig_subplots.add_trace(go.Scatter(x=df.index, y=df['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
-        fig_subplots.add_trace(go.Scatter(x=df.index, y=df['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
-        colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df['macd_hist']]
-        fig_subplots.add_trace(go.Bar(x=df.index, y=df['macd_hist'], name='Histogram', marker_color=colors), row=current_row, col=1)
+        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
+        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
+        colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df_final['macd_hist']]
+        fig_subplots.add_trace(go.Bar(x=df_final.index, y=df_final['macd_hist'], name='Histogram', marker_color=colors), row=current_row, col=1)
         fig_subplots.update_yaxes(title_text="MACD", row=current_row, col=1)
         fig_subplots.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
         
     if show_rsi or show_macd:
         fig_subplots.update_layout(
-            height=250 * (current_row - 1), # Increased height
+            height=250 * (current_row - 1), 
             template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
             xaxis_rangeslider_visible=False,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -854,10 +914,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
-    # This now runs for all users.
-    # Premium users get alerts for their selected pair.
-    # Free users get alerts for EUR/USD (as `selected_pair` is restricted for them).
-    check_for_live_signal(df, selected_pair)
+    check_for_live_signal(df_final, selected_pair, tp_pips, sl_pips)
 
     # --- ECONOMIC CALENDAR SECTION (REMOVED) ---
     st.markdown("---")
@@ -881,7 +938,14 @@ elif st.session_state.page == "app" and st.session_state.user:
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
-            scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
+            # --- NEW: Use sidebar settings for the scan ---
+            scan_params = {
+                "rsi_p": rsi_period, "sma_p": sma_period, 
+                "macd_f": macd_fast, "macd_sl": macd_slow, "macd_sig": macd_signal, 
+                "rsi_l": alert_rsi_low, "rsi_h": alert_rsi_high, 
+                "capital": initial_capital, "risk": risk_pct, 
+                "sl": sl_pips, "tp": tp_pips
+            }
             
             if st.button("Run Full Scan", type="primary", key="scan_button"):
                 if not all([scan_pairs, scan_intervals, scan_strategies]):
@@ -894,16 +958,21 @@ elif st.session_state.page == "app" and st.session_state.user:
                     for pair in scan_pairs:
                         for interval_key in scan_intervals:
                             interval_val = INTERVALS[interval_key]
-                            data = fetch_data(pair, interval_val)
+                            # Use the main fetch_data function
+                            data = fetch_data(pair, interval_val) 
                             if data.empty:
                                 st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping."); total_jobs -= len(scan_strategies); continue
                             for strategy in scan_strategies:
                                 job_count += 1
                                 progress_bar.progress(job_count / total_jobs, text=f"Testing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})")
+                                
+                                # Process data
                                 data_with_indicators = calculate_indicators(data.copy(), scan_params["rsi_p"], scan_params["sma_p"], scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
-                                data_with_signal = apply_strategy(data_with_indicators, strategy, scan_params["rsi_l"], scan_params["rsi_h"])
-                                data_with_signal = data_with_signal.dropna()
-                                if data_with_signal.empty: continue
+                                # --- BUG FIX: dropna() before apply_strategy() ---
+                                data_clean = data_with_indicators.dropna()
+                                if data_clean.empty: continue
+                                data_with_signal = apply_strategy(data_clean.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
+                                # --- End of fix ---
                                 
                                 total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
                                     data_with_signal, pair, scan_params["capital"], scan_params["risk"],
@@ -959,6 +1028,127 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # === AUTO-REFRESH COMPONENT ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
+
+    # === NEW: ALERT HISTORY SECTION (Sidebar Bottom) ===
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Alert History")
+
+    @st.cache_data(ttl=60) # Cache alerts for 60s
+    def load_alerts_from_firebase(user_id):
+        """Loads all alerts for the user from Firebase."""
+        try:
+            alerts = db.child("users").child(user_id).child("alerts").get().val()
+            if alerts:
+                # Convert dict of alerts into a sorted list
+                alerts_list = sorted(alerts.values(), key=lambda x: x['entry_timestamp'], reverse=True)
+                return alerts_list
+            return []
+        except Exception as e:
+            st.error(f"Error loading alerts: {e}")
+            return []
+
+    def update_alert_outcomes(alerts):
+        """Checks for new outcomes for all 'RUNNING' alerts."""
+        if db is None: return
+        
+        with st.spinner("Refreshing alert outcomes..."):
+            updated_count = 0
+            for alert in alerts:
+                if alert['status'] == 'RUNNING':
+                    try:
+                        # Fetch *new* data since the alert
+                        # We need to know the interval to fetch... this is tricky.
+                        # For now, we'll assume the *current* selected interval
+                        # This is a limitation we can improve later.
+                        
+                        # Calculate how many bars have passed
+                        alert_time = datetime.fromisoformat(alert['entry_time'])
+                        time_diff_seconds = (datetime.now(timezone.utc) - alert_time).total_seconds()
+                        
+                        # Convert interval to seconds (approx)
+                        interval_map = {"1min": 60, "5min": 300, "15min": 900, "30min": 1800, "1h": 3600}
+                        interval_seconds = interval_map.get(selected_interval, 3600)
+                        
+                        # Need at least 2 new bars to check
+                        bars_to_fetch = int(time_diff_seconds / interval_seconds) + 2
+                        
+                        if bars_to_fetch < 2:
+                            continue # Not enough time has passed
+                        
+                        # Fetch just enough new data
+                        df_new = fetch_data(alert['pair'], selected_interval, output_size=bars_to_fetch)
+                        if df_new.empty:
+                            continue
+                        
+                        # Find the entry bar in the new data
+                        try:
+                            entry_bar_index = df_new.index.get_loc(alert_time)
+                            df_future = df_new.iloc[entry_bar_index + 1:]
+                        except KeyError:
+                            # Entry bar is no longer in this small data fetch, skip
+                            continue
+                        
+                        if df_future.empty:
+                            continue
+
+                        # Check for TP/SL hit
+                        new_status = "RUNNING"
+                        tp = float(alert['tp_price'])
+                        sl = float(alert['sl_price'])
+                        
+                        for _, bar in df_future.iterrows():
+                            if alert['type'] == 'BUY':
+                                if bar['low'] <= sl:
+                                    new_status = "LOSS"; break
+                                if bar['high'] >= tp:
+                                    new_status = "PROFIT"; break
+                            elif alert['type'] == 'SELL':
+                                if bar['high'] >= sl:
+                                    new_status = "LOSS"; break
+                                if bar['low'] <= tp:
+                                    new_status = "PROFIT"; break
+                        
+                        if new_status != "RUNNING":
+                            updated_count += 1
+                            alert['status'] = new_status
+                            # Update in Firebase
+                            db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": new_status})
+
+                    except Exception as e:
+                        print(f"Error updating outcome for {alert['id']}: {e}")
+            
+            if updated_count > 0:
+                st.sidebar.success(f"Updated {updated_count} alert(s)!")
+                # Bust the cache to reload the table
+                st.cache_data.clear()
+            else:
+                st.sidebar.info("No new outcomes found.")
+
+
+    alert_list = load_alerts_from_firebase(user_id)
+
+    if st.sidebar.button("Refresh Outcomes", use_container_width=True):
+        update_alert_outcomes(alert_list)
+        # Rerun to reload the table
+        st.rerun()
+
+    if alert_list:
+        # Create a clean HTML table
+        table_html = "<table class='alert-history-table'><tr><th>Time</th><th>Pair</th><th>Type</th><th>Status</th></tr>"
+        
+        # Show top 10 most recent alerts
+        for alert in alert_list[:10]:
+            # Format time to be more readable
+            time_str = datetime.fromisoformat(alert['entry_time']).strftime('%m-%d %H:%M')
+            status_class = f"alert-status-{alert['status']}"
+            table_html += f"<tr><td>{time_str}</td><td>{alert['pair']}</td><td>{alert['type']}</td><td><span class='{status_class}'>{alert['status']}</span></td></tr>"
+        
+        table_html += "</table>"
+        st.sidebar.markdown(table_html, unsafe_allow_html=True)
+    else:
+        st.sidebar.info("No alerts found yet.")
+    # --- END OF ALERT HISTORY ---
+
 
 # === 8. Error handling for auth/db init failure ===
 elif not st.session_state.user:
