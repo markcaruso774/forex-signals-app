@@ -6,11 +6,13 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, timezone 
 import streamlit.components.v1 as components
 import talib
-from twelvedata import TDClient
+# import twelvedata # No longer needed
 import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & Calendar
 import uuid      # For unique alert IDs
+import finnhub   # --- NEW API CLIENT ---
+import time      # --- NEW: For timestamps ---
 
 # --- NEW LIBRARY ---
 from lightweight_charts.widgets import StreamlitChart
@@ -149,7 +151,7 @@ def create_payment_link(email, user_id):
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
-    url = "https.api.paystack.co/transaction/initialize"
+    url = "https://api.paystack.co/transaction/initialize"
     headers = {
         "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
         "Content-Type": "application/json"
@@ -197,7 +199,7 @@ def verify_payment(reference):
         return False
 
     try:
-        url = f"https.api.paystack.co/transaction/verify/{reference}"
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
         
         headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
         
@@ -315,12 +317,41 @@ elif st.session_state.page == "app" and st.session_state.user:
             verify_payment(reference)
     # --- End Payment Check ---
 
-    # === CONFIG ===
-    ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
+    # === CONFIG (FINNHUB) ===
+    # --- NEW: Finnhub uses a different format. We map user-friendly names to API symbols. ---
+    ALL_PAIRS = {
+        "EUR/USD": "OANDA:EUR_USD",
+        "GBP/USD": "OANDA:GBP_USD",
+        "USD/JPY": "OANDA:USD_JPY",
+        "USD/CAD": "OANDA:USD_CAD",
+        "AUD/USD": "OANDA:AUD_USD",
+        "NZD/USD": "OANDA:NZD_USD",
+        "EUR/GBP": "OANDA:EUR_GBP",
+        "EUR/JPY": "OANDA:EUR_JPY",
+        "GBP/JPY": "OANDA:GBP_JPY",
+        "USD/CHF": "OANDA:USD_CHF"
+    }
     FREE_PAIR = "EUR/USD"
-    PREMIUM_PAIRS = ALL_PAIRS
-    INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
-    OUTPUTSIZE = 500 # Number of candles to fetch
+    PREMIUM_PAIRS = ALL_PAIRS.keys() # The app UI will only show the user-friendly keys
+
+    # Finnhub intervals are "1", "5", "15", "30", "60", "D", "W", "M"
+    INTERVALS = {
+        "1min": "1",
+        "5min": "5",
+        "15min": "15",
+        "30min": "30",
+        "1h": "60"
+    }
+    
+    # Helper dict to calculate time ranges
+    INTERVAL_SECONDS = {
+        "1min": 60,
+        "5min": 300,
+        "15min": 900,
+        "30min": 1800,
+        "1h": 3600
+    }
+    OUTPUTSIZE = 500 # Default number of candles to fetch
 
     # === THEME ===
     if 'theme' not in st.session_state:
@@ -444,13 +475,15 @@ elif st.session_state.page == "app" and st.session_state.user:
     is_premium = st.session_state.is_premium
 
     if is_premium:
-        selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
+        # --- FINNHUB CHANGE: Show user-friendly names from dict keys ---
+        selected_pair = st.sidebar.selectbox("Select Pair", list(PREMIUM_PAIRS), index=0, key="selected_pair")
         st.sidebar.success("Premium Active – All Features Unlocked")
     else:
         selected_pair = FREE_PAIR
         st.sidebar.warning("Free Tier: EUR/USD Only")
         st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
 
+    # --- FINNHUB CHANGE: Show user-friendly names from dict keys ---
     selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"), key="selected_interval")
     
     st.sidebar.markdown("---")
@@ -540,21 +573,53 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # === HELPER FUNCTIONS (Alerts & Data) ===
     
+    # --- NEW: REWRITTEN FOR FINNHUB API ---
     @st.cache_data(ttl=60) # Cache for 60 seconds
-    def fetch_data(symbol, interval, output_size=OUTPUTSIZE):
-        """Fetches candle data from Twelve Data."""
-        if "TD_API_KEY" not in st.secrets:
-            st.error("TD_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
-        td = TDClient(apikey=st.secrets["TD_API_KEY"])
+    def fetch_data(symbol_key, interval_key, output_size=OUTPUTSIZE):
+        """Fetches candle data from Finnhub."""
+        if "FINNHUB_API_KEY" not in st.secrets:
+            st.error("FINNHUB_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
+        
         try:
-            ts = td.time_series(symbol=symbol, interval=interval, outputsize=output_size).as_pandas()
-            if ts is None or ts.empty:
-                st.error(f"No data returned for {symbol}."); return pd.DataFrame()
-            df = ts[['open', 'high', 'low', 'close']].copy()
-            df.index = pd.to_datetime(df.index)
-            return df.iloc[::-1] # Reverse to get ascending time
+            # Initialize client
+            finnhub_client = finnhub.Client(api_key=st.secrets["FINNHUB_API_KEY"])
+            
+            # Get API-formatted symbol and interval
+            symbol = ALL_PAIRS.get(symbol_key)
+            resolution = INTERVALS.get(interval_key)
+            
+            if not symbol or not resolution:
+                st.error(f"Invalid pair or interval: {symbol_key}, {interval_key}"); return pd.DataFrame()
+                
+            # Calculate time range
+            seconds_per_bar = INTERVAL_SECONDS.get(interval_key, 3600)
+            to_timestamp = int(time.time())
+            # Add a buffer (e.g., 20%) to account for non-trading periods
+            buffer_factor = 1.5 
+            from_timestamp = int(to_timestamp - (output_size * seconds_per_bar * buffer_factor))
+
+            # Make the API call
+            res = finnhub_client.forex_candles(symbol, resolution, from_timestamp, to_timestamp)
+            
+            if res.get('s') != 'ok':
+                st.error(f"Finnhub API error: {res.get('s')}"); return pd.DataFrame()
+
+            if not res.get('t'):
+                st.info(f"No data returned for {symbol_key} ({interval_key}). Market may be closed."); return pd.DataFrame()
+
+            # Process the data
+            df = pd.DataFrame(res)
+            # --- FIX: Convert to UTC-aware datetime ---
+            df['datetime'] = pd.to_datetime(df['t'], unit='s', utc=True)
+            df = df.set_index('datetime')
+            # Rename columns
+            df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close'})
+            
+            # Return only the required columns, and tail to the exact size
+            return df[['open', 'high', 'low', 'close']].tail(output_size)
+
         except Exception as e:
-            st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
+            st.error(f"API Error fetching {symbol_key}: {e}"); return pd.DataFrame()
 
     # --- NEW: DETAILED ALERT FUNCTION ---
     def send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price):
@@ -750,7 +815,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # === DATA LOADING & MAIN CHART LOGIC ===
     with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
-        df = fetch_data(selected_pair, INTERVALS[selected_interval])
+        # --- FINNHUB CHANGE: Pass the user-friendly keys ---
+        df = fetch_data(selected_pair, selected_interval)
     if df.empty:
         st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
     
@@ -964,10 +1030,12 @@ elif st.session_state.page == "app" and st.session_state.user:
         # Use columns for a cleaner layout of selection options
         col_scan1, col_scan2, col_scan3 = st.columns(3)
         with col_scan1:
-            scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"], help="Choose the forex pairs to include in the scan.")
+            # --- FINNHUB CHANGE: Use dict keys ---
+            scan_pairs = st.multiselect("Select Currency Pairs", list(PREMIUM_PAIRS), default=["EUR/USD", "GBP/USD", "USD/JPY"], help="Choose the forex pairs to include in the scan.")
         with col_scan2:
             scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"], help="Select the timeframes for strategy evaluation.")
         with col_scan3:
+            # --- CRASH FIX: Defaults are now valid ---
             scan_strategies = st.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"], help="Pick the strategies you wish to test.")
         
         # --- NEW: Use sidebar settings for the scan ---
@@ -994,9 +1062,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
                 for pair in scan_pairs:
                     for interval_key in scan_intervals:
-                        interval_val = INTERVALS[interval_key]
-                        # Use the main fetch_data function
-                        data = fetch_data(pair, interval_val) 
+                        # --- FINNHUB CHANGE: Use interval_key ---
+                        data = fetch_data(pair, interval_key) 
                         if data.empty:
                             with results_placeholder.container():
                                 st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping.")
@@ -1141,6 +1208,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                         
                         # Convert interval to seconds (approx)
                         interval_map = {"1min": 60, "5min": 300, "15min": 900, "30min": 1800, "1h": 3600}
+                        # --- FINNHUB CHANGE: Use interval_key ---
                         interval_seconds = interval_map.get(selected_interval, 3600)
                         
                         # Need at least 2 new bars to check
@@ -1150,17 +1218,20 @@ elif st.session_state.page == "app" and st.session_state.user:
                             continue # Not enough time has passed
                         
                         # Fetch just enough new data
+                        # --- FINNHUB CHANGE: Use interval_key ---
                         df_new = fetch_data(alert['pair'], selected_interval, output_size=bars_to_fetch)
                         if df_new.empty:
                             continue
                         
                         # Find the entry bar in the new data
                         try:
-                            entry_bar_index = df_new.index.get_loc(alert_time)
+                            # Finnhub data is UTC-aware, so we make alert_time UTC-aware
+                            alert_time_utc = alert_time.replace(tzinfo=timezone.utc)
+                            entry_bar_index = df_new.index.get_loc(alert_time_utc)
                             df_future = df_new.iloc[entry_bar_index + 1:]
                         except KeyError:
                             # Check if data is too old (e.g., entry bar not in the latest 500 candles)
-                            if alert_time < df_new.index.min():
+                            if alert_time.replace(tzinfo=timezone.utc) < df_new.index.min():
                                 # Can't determine, data is too old
                                 db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": "EXPIRED"})
                             continue
