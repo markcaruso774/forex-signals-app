@@ -757,26 +757,24 @@ elif st.session_state.page == "app" and st.session_state.user:
     with st.spinner("Calculating indicators..."):
         df_indicators = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
     
-    # --- BUG FIX: Run dropna() *before* applying strategy ---
-    df_clean = df_indicators.dropna()
-    if df_clean.empty:
-        st.warning("Waiting for sufficient data after indicator calculation..."); st.stop()
-        
+    # --- BUG FIX: Apply strategy to the *full* dataframe ---
     with st.spinner(f"Applying Strategy: {strategy_name}..."):
-        # Apply strategy to the clean data
-        df_final = apply_strategy(df_clean.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
-        # --- End of Bug Fix ---
+        # We apply strategy to the full df (with NaNs)
+        df_final = apply_strategy(df_indicators.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
+    # --- End of Bug Fix ---
         
     # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
     if run_backtest_button:
         with st.spinner("Running backtest on real market data..."):
+            # We must dropna() *before* backtesting, as it can't handle NaNs
+            df_backtest = df_final.dropna()
             total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
-                df_final, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
+                df_backtest, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
             )
             st.session_state.backtest_results = {
                 "total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit,
                 "profit_factor": pf, "final_capital": final_cap, "trade_df": trade_df,
-                "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval, "data_len": len(df_final)
+                "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval, "data_len": len(df_backtest)
             }
         st.rerun()
 
@@ -840,21 +838,24 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_reset = df_final.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # Convert all time data to ISO string format
-    df_reset['time'] = df_reset[index_col_name].apply(lambda x: x.isoformat())
+    # --- MARKER FIX: Format time to simple YYYY-MM-DDTHH:MM:SS string ---
+    df_reset['time'] = df_reset[index_col_name].apply(lambda x: x.strftime('%Y-%m-%dT%H:%M:%S'))
     
+    # --- BUG FIX: This now takes the FULL 500 rows ---
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
+    # --- BUG FIX: We ONLY dropna for the SMA line ---
     sma_data = df_reset[['time', 'sma']].dropna() 
     
+    # --- BUG FIX: Get signals from the FULL 500 row dataframe ---
     buy_signals = df_final[df_final['signal'] == 1].reset_index()
     sell_signals = df_final[df_final['signal'] == -1].reset_index()
     
     buy_index_col = buy_signals.columns[0]
     sell_index_col = sell_signals.columns[0]
     
-    # Convert marker time to ISO string as well
-    buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: x.isoformat())
-    sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: x.isoformat())
+    # --- MARKER FIX: Format marker time to the exact same string ---
+    buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: x.strftime('%Y-%m-%dT%H:%M:%S'))
+    sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: x.strftime('%Y-%m-%dT%H:%M:%S'))
 
     buy_markers = [
         {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
@@ -886,12 +887,15 @@ elif st.session_state.page == "app" and st.session_state.user:
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.6, 
-        row_heights=[0.7, 0.7] if show_rsi and show_macd else [1.0]
+        vertical_spacing=0.1, # <-- COMPRESSED CHART FIX
+        row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
+    # --- COMPRESSED CHART FIX: Calculate num_subplots ---
+    num_subplots = (1 if show_rsi else 0) + (1 if show_macd else 0)
     current_row = 1
     if show_rsi:
+        # --- FIX: Use df_final, which is the full 500-row df ---
         fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
         fig_subplots.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=current_row, col=1)
         fig_subplots.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=current_row, col=1)
@@ -900,6 +904,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         current_row += 1
         
     if show_macd:
+        # --- FIX: Use df_final, which is the full 500-row df ---
         fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
         fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
         colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df_final['macd_hist']]
@@ -909,7 +914,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         
     if show_rsi or show_macd:
         fig_subplots.update_layout(
-            height=300 * (current_row - 1), 
+            # --- COMPRESSED CHART FIX: Use num_subplots * 300 ---
+            height=300 * num_subplots, 
             template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
             xaxis_rangeslider_visible=False,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -917,6 +923,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
+    # --- FIX: Pass df_final (full 500 rows) to the check function ---
     check_for_live_signal(df_final, selected_pair, tp_pips, sl_pips)
 
     # --- ECONOMIC CALENDAR SECTION (REMOVED) ---
@@ -927,6 +934,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
             st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
             
+            # --- CRASH FIX: Corrected strategy names ---
             all_strategies = [
                 "RSI + SMA Crossover",
                 "MACD Crossover",
@@ -939,6 +947,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             col1, col2, col3 = st.columns(3)
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
+            # --- CRASH FIX: Defaults are now valid ---
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
             # --- NEW: Use sidebar settings for the scan ---
@@ -971,14 +980,15 @@ elif st.session_state.page == "app" and st.session_state.user:
                                 
                                 # Process data
                                 data_with_indicators = calculate_indicators(data.copy(), scan_params["rsi_p"], scan_params["sma_p"], scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
-                                # --- BUG FIX: dropna() before apply_strategy() ---
-                                data_clean = data_with_indicators.dropna()
+                                data_with_strategy = apply_strategy(data_with_indicators.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
+                                
+                                # --- BUG FIX: dropna() *after* strategy for backtest ---
+                                data_clean = data_with_strategy.dropna()
                                 if data_clean.empty: continue
-                                data_with_signal = apply_strategy(data_clean.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
                                 # --- End of fix ---
                                 
                                 total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
-                                    data_with_signal, pair, scan_params["capital"], scan_params["risk"],
+                                    data_clean, pair, scan_params["capital"], scan_params["risk"],
                                     scan_params["sl"], scan_params["tp"]
                                 )
                                 
