@@ -757,9 +757,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     with st.spinner("Calculating indicators..."):
         df_indicators = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
     
-    # --- BUG FIX: Apply strategy to the *full* dataframe ---
+    # --- MARKER BUG FIX: Apply strategy to the *full* dataframe (with NaNs) ---
     with st.spinner(f"Applying Strategy: {strategy_name}..."):
-        # We apply strategy to the full df (with NaNs)
         df_final = apply_strategy(df_indicators.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
     # --- End of Bug Fix ---
         
@@ -826,7 +825,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     chart.price_scale_options = {"borderColor": "#777"}
     chart.time_scale_options = {"borderColor": "#777"}
     
-    # --- NEW: Enable crosshair for OHLC on hover ---
+    # --- Enable crosshair (Note: Does not show OHLC box) ---
     chart.crosshair_options = {
         "mode": 1, # 0=Normal, 1=Magnet
         "vertLine": {"color": "#C0C0C0", "style": 2, "width": 1},
@@ -913,14 +912,16 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig_subplots.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
         
     if show_rsi or show_macd:
-        fig_subplots.update_layout(
-            # --- COMPRESSED CHART FIX: Use num_subplots * 300 ---
-            height=300 * num_subplots, 
-            template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
-            xaxis_rangeslider_visible=False,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-        st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
+        # --- COMPRESSED CHART FIX: Check num_subplots before updating layout ---
+        if num_subplots > 0:
+            fig_subplots.update_layout(
+                # --- COMPRESSED CHART FIX: Use num_subplots * 300 ---
+                height=300 * num_subplots, 
+                template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
+                xaxis_rangeslider_visible=False,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
     # --- FIX: Pass df_final (full 500 rows) to the check function ---
