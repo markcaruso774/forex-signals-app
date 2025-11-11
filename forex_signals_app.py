@@ -798,7 +798,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         cols=1,
         shared_xaxes=True,
         # --- FIX: Increased vertical spacing and height ---
-        vertical_spacing=0.2, 
+        vertical_spacing=0.6, 
         row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
@@ -822,7 +822,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     if show_rsi or show_macd:
         fig_subplots.update_layout(
             # --- FIX: Increased height per chart ---
-            height=250 * (current_row - 1), 
+            height=300 * (current_row - 1), 
             template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
             xaxis_rangeslider_visible=False,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
