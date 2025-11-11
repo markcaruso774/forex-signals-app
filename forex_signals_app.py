@@ -369,37 +369,58 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === ABOUT THE APP SECTION ===
-    with st.expander("👋 Welcome to PipWizard! Click here to learn about the app."):
+    # === ABOUT THE APP SECTION (REWRITTEN FOR CLARITY) ===
+    with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
         st.markdown(
-            f"""
+            """
             ### What is PipWizard?
-            PipWizard is a powerful decision-support tool for forex traders. It's designed to help you **find**, **test**, and **act on** trading strategies in real-time.
-            It combines a live signal generator and a powerful, on-demand backtesting engine.
+            PipWizard is a tool to help you **test trading strategies** before you use them. 
+            
+            It is **not** a "get rich quick" bot. It is a decision-support tool that lets you:
+            1.  **TEST** your ideas (e.g., "What if I buy when RSI is low?") on *historical data* to see if they would have been profitable.
+            2.  **FIND** new strategies by scanning many pairs and timeframes at once.
+            3.  **WATCH** your strategy for new signals in real-time.
 
-            ### How to Use the App
-            1.  **Step 1: TEST A STRATEGY (The "Main Backtest")**
-                * Use the sidebar to pick a strategy (`RSI Standalone`, etc.) and set your `Stop Loss` and `Take Profit`.
-                * Click the **"Run Backtest"** button to see a full report, including an **Equity Curve** and **Trade Log**.
-            2.  **Step 2: FIND THE BEST STRATEGY (Premium Feature)**
-                * Open the **"🚀 Strategy Scanner"** at the bottom of the page.
-                * This "heatmap" tool tests all strategies across all pairs and timeframes at once.
-            3.  **Step 3: ACTIVATE LIVE SIGNALS (Premium Feature)**
-                * Set your chosen parameters in the sidebar. The app will run in "live" mode, showing signals on the chart as they happen.
-                * Premium users will also receive an "ALERT SENT" in the sidebar.
+            ---
+            
+            ### Tour of the App
+            
+            **1. The Sidebar (Your Controls)**
+            * This is where you set up everything.
+            * **Pair & Timeframe:** Choose what you want to analyze.
+            * **Strategy:** Pick a strategy from the list (e.g., "RSI Standalone").
+            * **Indicator Config:** Set the parameters for your chosen strategy (e.g., RSI Period).
+            * **Backtesting Parameters:** Set your risk management rules (Stop Loss, Take Profit, etc.).
+            * **Save My Settings:** Click this to save all your sidebar settings to your account, so they load automatically the next time you log in.
 
-            ### Feature Tiers: Free vs. Premium
-            **🎁 Free Tier (Your Current Plan):**
-            * ✅ **Full Backtesting Engine**
-            * ✅ **All 6 Strategies** & All Timeframes
-            * 🔒 **Limited to EUR/USD** only.
+            **2. The Main Chart (Your "Live" View)**
+            * This chart shows you the most recent price data.
+            * The "BUY" and "SELL" arrows show you where your **currently selected strategy** would have generated signals.
+            * This chart automatically refreshes every minute. If a new signal appears on the latest candle, an "ALERT SENT" message will appear in your sidebar.
 
-            **⭐ Premium Tier ($29.99/month):**
-            Upgrade for **$29.99/month** to unlock every feature:
-            * ✅ **Unlock All 10+ Currency Pairs**
-            * ✅ **🚀 Strategy Scanner**
-            * ✅ **Live Signal Alerts**
-            *(Note: Scanner speed is limited by the Twelve Data Free API plan)*
+            **3. The Backtesting Report (Your "Test Results")**
+            * Click the **"Run Backtest"** button in the sidebar to generate this report.
+            * This is the most important feature. It takes your *current* sidebar settings and tests them against the 500 past candles shown on the chart.
+            * It tells you if your strategy was profitable, its win rate, and shows a full trade-by-trade log.
+            * **Use this to test an idea *before* you trust it.**
+
+            **4. The Strategy Scanner (Premium Feature)**
+            * Located at the bottom of the page.
+            * This is a "backtest of backtests." It automatically tests multiple strategies across multiple pairs and timeframes and shows you the best-performing ones in a simple table.
+
+            ---
+
+            ### Feature Tiers
+            
+            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
+            | :--- | :--- | :--- |
+            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
+            | **All Strategies** | ✅ Yes | ✅ Yes |
+            | **Save Settings** | ✅ Yes | ✅ Yes |
+            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
+            | **Live Signal Alerts** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **🚀 Strategy Scanner**| ❌ No | ✅ **Unlocked** |
+            
             """
         )
     
@@ -449,7 +470,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
-    risk_pct = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') / 100
+    # --- FIX: risk_pct key was 'risk_pct', but login logic was 'risk_pct' ---
+    # Kept 'risk_pct' in login, changing slider key to match
+    risk_pct_slider = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') 
+    risk_pct = risk_pct_slider / 100 # Convert to decimal for backtest
+    
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') 
     
@@ -466,12 +491,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.info(
         f"""
         **🎁 Free Tier:**\n
-        Full backtesting on EUR/USD only.
+        Full backtesting & live alerts on EUR/USD only.
 
         **⭐ Upgrade to Premium ($29.99/mo):**\n
         • Unlock all pairs\n
         • Unlock Strategy Scanner\n
-        • Get Live Signal Alerts
+        • Get Live Signal Alerts (for all pairs)
         """
     )
     if not is_premium:
@@ -481,7 +506,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     st.sidebar.markdown("---")
     
-    # --- NEW: "SAVE SETTINGS" BUTTON ---
+    # --- "SAVE SETTINGS" BUTTON ---
     if st.button("Save My Settings", use_container_width=True):
         if st.session_state.user:
             user_id = st.session_state.user['localId']
@@ -499,7 +524,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "macd_slow": st.session_state.get("macd_slow", 26),
                 "macd_signal": st.session_state.get("macd_signal", 9),
                 "capital": st.session_state.get("capital", 10000),
-                "risk_pct": st.session_state.get("risk_pct", 1.0), # Saves the slider value (1.0)
+                # --- FIX: Save the slider value (e.g., 1.0), not the decimal (0.01) ---
+                "risk_pct": st.session_state.get("risk_pct", 1.0), 
                 "sl_pips": st.session_state.get("sl_pips", 50),
                 "tp_pips": st.session_state.get("tp_pips", 100)
             }
@@ -510,7 +536,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 st.sidebar.success("Settings saved successfully!")
             except Exception as e:
                 st.sidebar.error(f"Failed to save settings: {e}")
-    # --- END OF NEW BUTTON ---
+    # --- END OF SAVE BUTTON ---
 
     if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button"):
         st.session_state.page = "profile"
@@ -797,8 +823,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
         shared_xaxes=True,
-        # --- FIX: Increased vertical spacing and height ---
-        vertical_spacing=0.6, 
+        vertical_spacing=0.2, # Increased spacing
         row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
@@ -821,8 +846,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         
     if show_rsi or show_macd:
         fig_subplots.update_layout(
-            # --- FIX: Increased height per chart ---
-            height=300 * (current_row - 1), 
+            height=250 * (current_row - 1), # Increased height
             template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
             xaxis_rangeslider_visible=False,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -830,8 +854,10 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
 
     # === LIVE SIGNAL ALERT CHECK ===
-    if is_premium:
-        check_for_live_signal(df, selected_pair)
+    # This now runs for all users.
+    # Premium users get alerts for their selected pair.
+    # Free users get alerts for EUR/USD (as `selected_pair` is restricted for them).
+    check_for_live_signal(df, selected_pair)
 
     # --- ECONOMIC CALENDAR SECTION (REMOVED) ---
     st.markdown("---")
@@ -841,7 +867,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         with st.expander("🚀 Strategy Scanner (Premium Feature)"):
             st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
             
-            # --- FIX: Corrected strategy names to match apply_strategy func ---
             all_strategies = [
                 "RSI + SMA Crossover",
                 "MACD Crossover",
@@ -854,7 +879,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             col1, col2, col3 = st.columns(3)
             scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
             scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
-            # --- FIX: This line is now correct because the list above matches the default ---
             scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
             
             scan_params = {"rsi_p": 14, "sma_p": 20, "macd_f": 12, "macd_sl": 26, "macd_sig": 9, "rsi_l": 30, "rsi_h": 70, "capital": 10000, "risk": 0.01, "sl": 50, "tp": 100}
@@ -920,14 +944,16 @@ elif st.session_state.page == "app" and st.session_state.user:
     else:
          st.info("The **🚀 Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
 
-    # === RISK DISCLAIMER ===
+    # === RISK DISCLAIMER (REWRITTEN FOR CLARITY) ===
     st.markdown("---")
     st.subheader("⚠️ Risk Disclaimer")
     st.warning(
         """
-        This is a simulation and not financial advice. All backtest results are based on historical data and do not guarantee future performance. 
-        Forex trading is extremely risky and can result of your entire capital. 
-        Always trade responsibly and stick to your risk management plan.
+        **This is a simulation and not financial advice.**
+        * All backtest results are based on **historical data** and do not guarantee future performance.
+        * Forex trading is extremely risky and can result **in the loss** of your entire capital.
+        * This tool is for educational and informational purposes only.
+        * Always trade responsibly and use your own risk management plan.
         """
     )
 
