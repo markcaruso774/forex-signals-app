@@ -932,84 +932,112 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
-        with st.expander("🚀 Strategy Scanner (Premium Feature)"):
-            st.info("Compare all strategies across multiple pairs and timeframes to find the best performers.")
-            
-            # --- CRASH FIX: Corrected strategy names ---
-            all_strategies = [
-                "RSI + SMA Crossover",
-                "MACD Crossover",
-                "RSI + MACD (Confluence)",
-                "SMA + MACD (Confluence)",
-                "RSI Standalone",
-                "SMA Crossover Standalone"
-            ]
-            
-            col1, col2, col3 = st.columns(3)
-            scan_pairs = col1.multiselect("Select Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"])
-            scan_intervals = col2.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"])
-            # --- CRASH FIX: Defaults are now valid ---
-            scan_strategies = col3.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"])
-            
-            # --- NEW: Use sidebar settings for the scan ---
-            scan_params = {
-                "rsi_p": rsi_period, "sma_p": sma_period, 
-                "macd_f": macd_fast, "macd_sl": macd_slow, "macd_sig": macd_signal, 
-                "rsi_l": alert_rsi_low, "rsi_h": alert_rsi_high, 
-                "capital": initial_capital, "risk": risk_pct, 
-                "sl": sl_pips, "tp": tp_pips
-            }
-            
-            if st.button("Run Full Scan", type="primary", key="scan_button"):
-                if not all([scan_pairs, scan_intervals, scan_strategies]):
-                    st.error("Please select at least one Pair, Timeframe, and Strategy.")
-                else:
-                    total_jobs = len(scan_pairs) * len(scan_intervals) * len(scan_strategies)
-                    progress_bar = st.progress(0, text=f"Starting Scan... (0/{total_jobs})")
-                    scan_results = []
-                    job_count = 0
-                    for pair in scan_pairs:
-                        for interval_key in scan_intervals:
-                            interval_val = INTERVALS[interval_key]
-                            # Use the main fetch_data function
-                            data = fetch_data(pair, interval_val) 
-                            if data.empty:
-                                st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping."); total_jobs -= len(scan_strategies); continue
-                            for strategy in scan_strategies:
-                                job_count += 1
-                                progress_bar.progress(job_count / total_jobs, text=f"Testing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})")
-                                
-                                # Process data
-                                data_with_indicators = calculate_indicators(data.copy(), scan_params["rsi_p"], scan_params["sma_p"], scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
-                                data_with_strategy = apply_strategy(data_with_indicators.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
-                                
-                                # --- BUG FIX: dropna() *after* strategy for backtest ---
-                                data_clean = data_with_strategy.dropna()
-                                if data_clean.empty: continue
-                                # --- End of fix ---
-                                
-                                total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
-                                    data_clean, pair, scan_params["capital"], scan_params["risk"],
-                                    scan_params["sl"], scan_params["tp"]
-                                )
-                                
-                                if total_trades > 0:
-                                    scan_results.append({"Pair": pair, "Timeframe": interval_key, "Strategy": strategy, "Total Profit ($)": total_profit, "Win Rate (%)": win_rate * 100, "Profit Factor": pf, "Total Trades": total_trades})
-                    
-                    progress_bar.progress(1.0, text="Scan Complete!")
-                    
+        # Instead of an expander, let's use a themed container for a more structured feel
+        st.markdown(f"""
+            <div style="
+                border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'};
+                border-radius: 8px;
+                padding: 20px;
+                margin-top: 30px;
+                margin-bottom: 30px;
+                background-color: {'#1a1a1a' if st.session_state.theme == 'dark' else '#fdfdfd'};
+                box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+            ">
+                <h3 style="color: {'#e0e0e0' if st.session_state.theme == 'dark' else '#333'}; margin-top: 0;">
+                    🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
+                </h3>
+                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'}; margin-bottom: 20px;">
+                    Uncover the most profitable strategies by backtesting across multiple currency pairs and timeframes, tailored to your risk parameters.
+                </p>
+        """, unsafe_allow_html=True)
+
+        # --- CRASH FIX: Corrected strategy names ---
+        all_strategies = [
+            "RSI + SMA Crossover",
+            "MACD Crossover",
+            "RSI + MACD (Confluence)",
+            "SMA + MACD (Confluence)",
+            "RSI Standalone",
+            "SMA Crossover Standalone"
+        ]
+        
+        # Use columns for a cleaner layout of selection options
+        col_scan1, col_scan2, col_scan3 = st.columns(3)
+        with col_scan1:
+            scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"], help="Choose the forex pairs to include in the scan.")
+        with col_scan2:
+            scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"], help="Select the timeframes for strategy evaluation.")
+        with col_scan3:
+            scan_strategies = st.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"], help="Pick the strategies you wish to test.")
+        
+        # --- NEW: Use sidebar settings for the scan ---
+        scan_params = {
+            "rsi_p": rsi_period, "sma_p": sma_period, 
+            "macd_f": macd_fast, "macd_sl": macd_slow, "macd_sig": macd_signal, 
+            "rsi_l": alert_rsi_low, "rsi_h": alert_rsi_high, 
+            "capital": initial_capital, "risk": risk_pct, 
+            "sl": sl_pips, "tp": tp_pips
+        }
+        
+        st.markdown("<br>", unsafe_allow_html=True) # Add some space before the button
+        if st.button("Initiate Scan", type="primary", key="scan_button_professional", use_container_width=True): 
+            if not all([scan_pairs, scan_intervals, scan_strategies]):
+                st.error("Please select at least one Pair, Timeframe, and Strategy to begin the scan.")
+            else:
+                total_jobs = len(scan_pairs) * len(scan_intervals) * len(scan_strategies)
+                progress_bar = st.progress(0, text=f"Starting Scan... (0/{total_jobs})")
+                scan_results = []
+                job_count = 0
+                
+                # Using st.empty() for dynamic output updates within the container
+                results_placeholder = st.empty()
+
+                for pair in scan_pairs:
+                    for interval_key in scan_intervals:
+                        interval_val = INTERVALS[interval_key]
+                        # Use the main fetch_data function
+                        data = fetch_data(pair, interval_val) 
+                        if data.empty:
+                            with results_placeholder.container():
+                                st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping.")
+                            total_jobs -= len(scan_strategies); continue
+                        for strategy in scan_strategies:
+                            job_count += 1
+                            progress_bar.progress(job_count / total_jobs, text=f"Analyzing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})")
+                            
+                            # Process data
+                            data_with_indicators = calculate_indicators(data.copy(), scan_params["rsi_p"], scan_params["sma_p"], scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
+                            data_with_strategy = apply_strategy(data_with_indicators.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
+                            
+                            # --- BUG FIX: dropna() *after* strategy for backtest ---
+                            data_clean = data_with_strategy.dropna()
+                            if data_clean.empty: continue
+                            # --- End of fix ---
+                            
+                            total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(
+                                data_clean, pair, scan_params["capital"], scan_params["risk"],
+                                scan_params["sl"], scan_params["tp"]
+                            )
+                            
+                            if total_trades > 0:
+                                scan_results.append({"Pair": pair, "Timeframe": interval_key, "Strategy": strategy, "Total Profit ($)": total_profit, "Win Rate (%)": win_rate * 100, "Profit Factor": pf, "Total Trades": total_trades})
+                
+                progress_bar.progress(1.0, text="Scan Complete!")
+                
+                with results_placeholder.container(): # Display results within the placeholder
                     if scan_results:
+                        st.subheader("Scan Results Overview")
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
                         
                         def style_profit(val):
-                            color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else '#f0f0f0'; return f'color: {color}; font-weight: bold;'
+                            color = '#26a69a' if val > 0 else '#ef5350' if val < 0 else ( '#f0f0f0' if st.session_state.theme == 'dark' else '#212529' ); return f'color: {color}; font-weight: bold;'
                         
                         def style_win_rate(val):
                             if pd.isna(val):
                                 return 'background-color: #333; color: #888;' 
-                            val = max(0, min(100, val)); color = 'white'
-                            if val < 50: return f'background-color: rgba(239, 83, 80, {1 - (val/50)}); color: {color};'
-                            else: return f'background-color: rgba(38, 166, 154, {(val-50)/50}); color: {color};'
+                            val = max(0, min(100, val)); color = 'white' if st.session_state.theme == 'dark' else 'black'
+                            if val < 50: return f'background-color: rgba(239, 83, 80, {0.2 + (1 - (val/50))*0.6}); color: {color};' # So it's not too faint
+                            else: return f'background-color: rgba(38, 166, 154, {0.2 + ((val-50)/50)*0.6}); color: {color};'
                         
                         def style_profit_factor(val):
                             color = '#26a69a' if val >= 1.0 else '#ef5350'; return f'color: {color}; font-weight: bold;'
@@ -1023,9 +1051,41 @@ elif st.session_state.page == "app" and st.session_state.user:
                             width='stretch'
                         )
                     else:
-                        st.info("Scan completed, but no trades were found with these settings.")
+                        st.info("Scan completed, but no profitable trades were found with the selected criteria and parameters. Consider adjusting your strategy settings.")
+        
+        st.markdown("</div>", unsafe_allow_html=True) # Close the custom container
     else:
-         st.info("The **🚀 Strategy Scanner** is a Premium feature. Go to your Profile to upgrade!")
+         st.markdown(f"""
+            <div style="
+                border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'};
+                border-radius: 8px;
+                padding: 20px;
+                margin-top: 30px;
+                margin-bottom: 30px;
+                background-color: {'#1a1a1a' if st.session_state.theme == 'dark' else '#fdfdfd'};
+                box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+            ">
+                <h3 style="color: {'#e0e0e0' if st.session_state.theme == 'dark' else '#333'}; margin-top: 0;">
+                    🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
+                </h3>
+                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'};">
+                    The **Strategy Scanner** is a powerful Premium feature designed to help you discover the most effective trading strategies across a wide range of pairs and timeframes.
+                </p>
+                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'};">
+                    Upgrade to Premium to unlock this feature and supercharge your analysis!
+                </p>
+                <div style="text-align: center; margin-top: 20px;">
+                    <a href="#" onclick="window.parent.location.href = '{st.secrets.APP_URL}?page=profile'" target="_self" style="
+                        background-color: #007bff;
+                        color: white;
+                        padding: 10px 20px;
+                        border-radius: 5px;
+                        text-decoration: none;
+                        font-weight: bold;
+                    ">Upgrade to Premium Now!</a>
+                </div>
+            </div>
+         """, unsafe_allow_html=True)
 
     # === RISK DISCLAIMER (REWRITTEN FOR CLARITY) ===
     st.markdown("---")
