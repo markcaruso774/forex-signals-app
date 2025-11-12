@@ -55,29 +55,34 @@ if 'is_premium' not in st.session_state:
 if 'page' not in st.session_state:
     st.session_state.page = "login" # Start on 'login'
 
-# === 3. AUTHENTICATION FUNCTIONS ===
+# === 3. AUTHENTICATION FUNCTIONS (IMPROVED ERROR HANDLING) ===
 def sign_up(email, password):
     """Signs up a new user with Firebase Auth and adds them to Realtime DB."""
     if auth is None or db is None:
         st.error("Auth service not available. Contact support.")
         return
     try:
+        # 1. Create User in Auth
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        # Create a user profile in the database
+        
+        # 2. Create User Profile in DB
         user_data = {"email": email, "subscription_status": "free"}
         db.child("users").child(user['localId']).set(user_data)
+        
         st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
     except Exception as e:
-        error_message = "An unknown error occurred."
+        # Parse Firebase error if possible, otherwise show raw error
+        error_message = str(e)
         try:
-            # Try to parse the JSON error message from Firebase
             error_json = e.args[1]
-            error_message = json.loads(error_json).get('error', {}).get('message', error_message)
+            error_data = json.loads(error_json)
+            if 'error' in error_data and 'message' in error_data['error']:
+                error_message = error_data['error']['message']
         except:
-            pass # Fallback to default error message
+            pass
         st.error(f"Failed to create account: {error_message}")
 
 def login(email, password):
@@ -126,10 +131,12 @@ def login(email, password):
         st.session_state.page = "app"
         st.rerun()
     except Exception as e:
-        error_message = "An unknown error occurred."
+        error_message = str(e)
         try:
             error_json = e.args[1]
-            error_message = json.loads(error_json).get('error', {}).get('message', error_message)
+            error_data = json.loads(error_json)
+            if 'error' in error_data and 'message' in error_data['error']:
+                error_message = error_data['error']['message']
         except:
              pass 
         st.error(f"Login Failed: {error_message}")
@@ -148,13 +155,18 @@ def create_payment_link(email, user_id):
     """
     test_amount_kobo = 10000 
     
-    if "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
+    # Determine if using Test or Live keys based on availability
+    if "PAYSTACK_LIVE" in st.secrets:
+        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
+    elif "PAYSTACK_TEST" in st.secrets:
+        secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
+    else:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
 
     url = "https://api.paystack.co/transaction/initialize"
     headers = {
-        "Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}",
+        "Authorization": f"Bearer {secret_key}",
         "Content-Type": "application/json"
     }
     
@@ -172,7 +184,7 @@ def create_payment_link(email, user_id):
         "metadata": {
             "user_id": user_id,
             "user_email": email,
-            "description": "PipWizard Premium Subscription (Test)"
+            "description": "PipWizard Premium Subscription"
         }
     }
     
@@ -195,14 +207,19 @@ def verify_payment(reference):
     """
     Calls Paystack to verify a transaction reference.
     """
-    if db is None or "PAYSTACK_TEST" not in st.secrets or "PAYSTACK_SECRET_KEY" not in st.secrets["PAYSTACK_TEST"]:
+    # Determine if using Test or Live keys based on availability
+    if "PAYSTACK_LIVE" in st.secrets:
+        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
+    elif "PAYSTACK_TEST" in st.secrets:
+        secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
+    else:
         st.error("Services not initialized.")
         return False
 
     try:
         url = f"https://api.paystack.co/transaction/verify/{reference}"
         
-        headers = {"Authorization": f"Bearer {st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']}"}
+        headers = {"Authorization": f"Bearer {secret_key}"}
         
         response = requests.get(url, headers=headers)
         response_data = response.json()
