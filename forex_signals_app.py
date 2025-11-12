@@ -6,13 +6,11 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta, timezone 
 import streamlit.components.v1 as components
 import talib
-# import twelvedata # No longer needed
+from twelvedata import TDClient
 import pyrebase  # For Firebase
 import json      # For Firebase
-import requests  # For Paystack & Calendar
+import requests  # For Paystack & Telegram
 import uuid      # For unique alert IDs
-import finnhub   # --- NEW API CLIENT ---
-import time      # --- NEW: For timestamps ---
 
 # --- NEW LIBRARY ---
 from lightweight_charts.widgets import StreamlitChart
@@ -30,7 +28,7 @@ def initialize_firebase():
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
-                config["databaseURL"] = f"https{project_id}-default-rtdb.firebaseio.com/"
+                config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
             else:
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
         
@@ -117,6 +115,9 @@ def login(email, password):
             st.session_state.risk_pct = settings.get("risk_pct", 1.0)
             st.session_state.sl_pips = settings.get("sl_pips", 50)
             st.session_state.tp_pips = settings.get("tp_pips", 100)
+            
+            # --- NEW: Load Telegram Chat ID ---
+            st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
             
         else:
             # Failsafe if user exists in Auth but not DB
@@ -317,41 +318,12 @@ elif st.session_state.page == "app" and st.session_state.user:
             verify_payment(reference)
     # --- End Payment Check ---
 
-    # === CONFIG (FINNHUB) ===
-    # --- NEW: Finnhub uses a different format. We map user-friendly names to API symbols. ---
-    ALL_PAIRS = {
-        "EUR/USD": "OANDA:EUR_USD",
-        "GBP/USD": "OANDA:GBP_USD",
-        "USD/JPY": "OANDA:USD_JPY",
-        "USD/CAD": "OANDA:USD_CAD",
-        "AUD/USD": "OANDA:AUD_USD",
-        "NZD/USD": "OANDA:NZD_USD",
-        "EUR/GBP": "OANDA:EUR_GBP",
-        "EUR/JPY": "OANDA:EUR_JPY",
-        "GBP/JPY": "OANDA:GBP_JPY",
-        "USD/CHF": "OANDA:USD_CHF"
-    }
+    # === CONFIG ===
+    ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
     FREE_PAIR = "EUR/USD"
-    PREMIUM_PAIRS = ALL_PAIRS.keys() # The app UI will only show the user-friendly keys
-
-    # Finnhub intervals are "1", "5", "15", "30", "60", "D", "W", "M"
-    INTERVALS = {
-        "1min": "1",
-        "5min": "5",
-        "15min": "15",
-        "30min": "30",
-        "1h": "60"
-    }
-    
-    # Helper dict to calculate time ranges
-    INTERVAL_SECONDS = {
-        "1min": 60,
-        "5min": 300,
-        "15min": 900,
-        "30min": 1800,
-        "1h": 3600
-    }
-    OUTPUTSIZE = 500 # Default number of candles to fetch
+    PREMIUM_PAIRS = ALL_PAIRS
+    INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
+    OUTPUTSIZE = 500 # Number of candles to fetch
 
     # === THEME ===
     if 'theme' not in st.session_state:
@@ -475,15 +447,13 @@ elif st.session_state.page == "app" and st.session_state.user:
     is_premium = st.session_state.is_premium
 
     if is_premium:
-        # --- FINNHUB CHANGE: Show user-friendly names from dict keys ---
-        selected_pair = st.sidebar.selectbox("Select Pair", list(PREMIUM_PAIRS), index=0, key="selected_pair")
+        selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
         st.sidebar.success("Premium Active – All Features Unlocked")
     else:
         selected_pair = FREE_PAIR
         st.sidebar.warning("Free Tier: EUR/USD Only")
         st.sidebar.info("Upgrade to Premium to unlock all pairs and the Strategy Scanner!")
 
-    # --- FINNHUB CHANGE: Show user-friendly names from dict keys ---
     selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"), key="selected_interval")
     
     st.sidebar.markdown("---")
@@ -543,6 +513,13 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     st.sidebar.markdown("---")
     
+    # --- NEW: Telegram Chat ID Input ---
+    st.sidebar.subheader("Notification Settings")
+    telegram_chat_id = st.sidebar.text_input("Your Telegram Chat ID", 
+                                             value=st.session_state.get("telegram_chat_id", ""), 
+                                             key="telegram_chat_id_input",
+                                             help="Start a chat with @userinfobot on Telegram to get your ID.")
+    
     if st.button("Save My Settings", use_container_width=True):
         if st.session_state.user:
             settings_to_save = {
@@ -559,10 +536,14 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "capital": st.session_state.get("capital", 10000),
                 "risk_pct": st.session_state.get("risk_pct", 1.0), 
                 "sl_pips": st.session_state.get("sl_pips", 50),
-                "tp_pips": st.session_state.get("tp_pips", 100)
+                "tp_pips": st.session_state.get("tp_pips", 100),
+                # --- NEW: Save the Telegram Chat ID ---
+                "telegram_chat_id": telegram_chat_id 
             }
             try:
                 db.child("users").child(user_id).child("settings").set(settings_to_save)
+                # --- NEW: Update session state immediately ---
+                st.session_state.telegram_chat_id = telegram_chat_id
                 st.sidebar.success("Settings saved successfully!")
             except Exception as e:
                 st.sidebar.error(f"Failed to save settings: {e}")
@@ -573,57 +554,62 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # === HELPER FUNCTIONS (Alerts & Data) ===
     
-    # --- NEW: REWRITTEN FOR FINNHUB API ---
     @st.cache_data(ttl=60) # Cache for 60 seconds
-    def fetch_data(symbol_key, interval_key, output_size=OUTPUTSIZE):
-        """Fetches candle data from Finnhub."""
-        if "FINNHUB_API_KEY" not in st.secrets:
-            st.error("FINNHUB_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
+    def fetch_data(symbol, interval, output_size=OUTPUTSIZE):
+        """Fetches candle data from Twelve Data."""
+        if "TD_API_KEY" not in st.secrets:
+            st.error("TD_API_KEY not found in Streamlit Secrets."); return pd.DataFrame()
+        td = TDClient(apikey=st.secrets["TD_API_KEY"])
+        try:
+            ts = td.time_series(symbol=symbol, interval=interval, outputsize=output_size).as_pandas()
+            if ts is None or ts.empty:
+                st.error(f"No data returned for {symbol}."); return pd.DataFrame()
+            df = ts[['open', 'high', 'low', 'close']].copy()
+            df.index = pd.to_datetime(df.index)
+            return df.iloc[::-1] # Reverse to get ascending time
+        except Exception as e:
+            st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
+
+    # --- TELEGRAM ALERT FUNCTION (UPDATED) ---
+    def send_telegram_alert(pair, signal_type, entry, tp, sl):
+        """Sends a structured alert message to Telegram."""
+        if "TELEGRAM" not in st.secrets:
+            return # Skip if no Bot Token is configured
+            
+        token = st.secrets["TELEGRAM"].get("BOT_TOKEN")
+        
+        # --- NEW: Get the user's specific Chat ID from session state ---
+        chat_id = st.session_state.get("telegram_chat_id")
+        
+        if not token or not chat_id:
+            # Don't send if bot or *user's* chat ID is missing
+            return
+
+        emoji = "🟢" if signal_type == "BUY" else "🔴"
+        message = f"""
+🚀 *PipWizard Alert* 🚀
+*Pair:* {pair}
+*Signal:* {signal_type} {emoji}
+*Entry:* `{entry}`
+*TP:* `{tp}`
+*SL:* `{sl}`
+        """
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {
+            "chat_id": chat_id, 
+            "text": message, 
+            "parse_mode": "Markdown"
+        }
         
         try:
-            # Initialize client
-            finnhub_client = finnhub.Client(api_key=st.secrets["FINNHUB_API_KEY"])
-            
-            # Get API-formatted symbol and interval
-            symbol = ALL_PAIRS.get(symbol_key)
-            resolution = INTERVALS.get(interval_key)
-            
-            if not symbol or not resolution:
-                st.error(f"Invalid pair or interval: {symbol_key}, {interval_key}"); return pd.DataFrame()
-                
-            # Calculate time range
-            seconds_per_bar = INTERVAL_SECONDS.get(interval_key, 3600)
-            to_timestamp = int(time.time())
-            # Add a buffer (e.g., 20%) to account for non-trading periods
-            buffer_factor = 1.5 
-            from_timestamp = int(to_timestamp - (output_size * seconds_per_bar * buffer_factor))
-
-            # Make the API call
-            res = finnhub_client.forex_candles(symbol, resolution, from_timestamp, to_timestamp)
-            
-            if res.get('s') != 'ok':
-                st.error(f"Finnhub API error: {res.get('s')}"); return pd.DataFrame()
-
-            if not res.get('t'):
-                st.info(f"No data returned for {symbol_key} ({interval_key}). Market may be closed."); return pd.DataFrame()
-
-            # Process the data
-            df = pd.DataFrame(res)
-            # --- FIX: Convert to UTC-aware datetime ---
-            df['datetime'] = pd.to_datetime(df['t'], unit='s', utc=True)
-            df = df.set_index('datetime')
-            # Rename columns
-            df = df.rename(columns={'o': 'open', 'h': 'high', 'l': 'low', 'c': 'close'})
-            
-            # Return only the required columns, and tail to the exact size
-            return df[['open', 'high', 'low', 'close']].tail(output_size)
-
+            requests.post(url, json=payload)
         except Exception as e:
-            st.error(f"API Error fetching {symbol_key}: {e}"); return pd.DataFrame()
+            print(f"Telegram Error: {e}") # Log to console, don't interrupt app
 
     # --- NEW: DETAILED ALERT FUNCTION ---
     def send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price):
-        """Saves a new alert to Firebase."""
+        """Saves a new alert to Firebase and sends via Telegram."""
         if db is None or user_id is None:
             return
 
@@ -641,10 +627,13 @@ elif st.session_state.page == "app" and st.session_state.user:
         }
         
         try:
-            # Save the alert to Firebase
+            # Save to Firebase
             db.child("users").child(user_id).child("alerts").child(alert_id).set(alert_data)
             
-            # Show a success message
+            # Send to Telegram
+            send_telegram_alert(pair, signal_type, f"{entry_price:.5f}", f"{tp_price:.5f}", f"{sl_price:.5f}")
+            
+            # Show sidebar success
             st.sidebar.success(f"New {signal_type} Alert on {pair}!")
             st.sidebar.markdown(f"""
             - **Entry:** `{entry_price:.5f}`
@@ -815,8 +804,7 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     # === DATA LOADING & MAIN CHART LOGIC ===
     with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
-        # --- FINNHUB CHANGE: Pass the user-friendly keys ---
-        df = fetch_data(selected_pair, selected_interval)
+        df = fetch_data(selected_pair, INTERVALS[selected_interval])
     if df.empty:
         st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
     
@@ -998,7 +986,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     # === STRATEGY SCANNER (PREMIUM FEATURE) ===
     if is_premium:
-        # Instead of an expander, let's use a themed container for a more structured feel
+        # Custom "Classic" Professional Container
         st.markdown(f"""
             <div style="
                 border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'};
@@ -1027,15 +1015,13 @@ elif st.session_state.page == "app" and st.session_state.user:
             "SMA Crossover Standalone"
         ]
         
-        # Use columns for a cleaner layout of selection options
+        # Use columns for a cleaner layout
         col_scan1, col_scan2, col_scan3 = st.columns(3)
         with col_scan1:
-            # --- FINNHUB CHANGE: Use dict keys ---
-            scan_pairs = st.multiselect("Select Currency Pairs", list(PREMIUM_PAIRS), default=["EUR/USD", "GBP/USD", "USD/JPY"], help="Choose the forex pairs to include in the scan.")
+            scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"], help="Choose the forex pairs to include in the scan.")
         with col_scan2:
             scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"], help="Select the timeframes for strategy evaluation.")
         with col_scan3:
-            # --- CRASH FIX: Defaults are now valid ---
             scan_strategies = st.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"], help="Pick the strategies you wish to test.")
         
         # --- NEW: Use sidebar settings for the scan ---
@@ -1047,7 +1033,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             "sl": sl_pips, "tp": tp_pips
         }
         
-        st.markdown("<br>", unsafe_allow_html=True) # Add some space before the button
+        st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Initiate Scan", type="primary", key="scan_button_professional", use_container_width=True): 
             if not all([scan_pairs, scan_intervals, scan_strategies]):
                 st.error("Please select at least one Pair, Timeframe, and Strategy to begin the scan.")
@@ -1057,13 +1043,14 @@ elif st.session_state.page == "app" and st.session_state.user:
                 scan_results = []
                 job_count = 0
                 
-                # Using st.empty() for dynamic output updates within the container
+                # Use placeholder for results
                 results_placeholder = st.empty()
 
                 for pair in scan_pairs:
                     for interval_key in scan_intervals:
-                        # --- FINNHUB CHANGE: Use interval_key ---
-                        data = fetch_data(pair, interval_key) 
+                        interval_val = INTERVALS[interval_key]
+                        # Use the main fetch_data function
+                        data = fetch_data(pair, interval_val) 
                         if data.empty:
                             with results_placeholder.container():
                                 st.warning(f"Could not fetch data for {pair} ({interval_key}). Skipping.")
@@ -1091,7 +1078,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 
                 progress_bar.progress(1.0, text="Scan Complete!")
                 
-                with results_placeholder.container(): # Display results within the placeholder
+                with results_placeholder.container(): 
                     if scan_results:
                         st.subheader("Scan Results Overview")
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
@@ -1103,7 +1090,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                             if pd.isna(val):
                                 return 'background-color: #333; color: #888;' 
                             val = max(0, min(100, val)); color = 'white' if st.session_state.theme == 'dark' else 'black'
-                            if val < 50: return f'background-color: rgba(239, 83, 80, {0.2 + (1 - (val/50))*0.6}); color: {color};' # So it's not too faint
+                            if val < 50: return f'background-color: rgba(239, 83, 80, {0.2 + (1 - (val/50))*0.6}); color: {color};'
                             else: return f'background-color: rgba(38, 166, 154, {0.2 + ((val-50)/50)*0.6}); color: {color};'
                         
                         def style_profit_factor(val):
@@ -1118,9 +1105,9 @@ elif st.session_state.page == "app" and st.session_state.user:
                             width='stretch'
                         )
                     else:
-                        st.info("Scan completed, but no profitable trades were found with the selected criteria and parameters. Consider adjusting your strategy settings.")
+                        st.info("Scan completed, but no profitable trades were found. Consider adjusting your settings.")
         
-        st.markdown("</div>", unsafe_allow_html=True) # Close the custom container
+        st.markdown("</div>", unsafe_allow_html=True) # Close custom container
     else:
          st.markdown(f"""
             <div style="
@@ -1136,13 +1123,13 @@ elif st.session_state.page == "app" and st.session_state.user:
                     🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
                 </h3>
                 <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'};">
-                    The **Strategy Scanner** is a powerful Premium feature designed to help you discover the most effective trading strategies across a wide range of pairs and timeframes.
+                    The **Strategy Scanner** is a powerful Premium feature designed to help you discover the most effective trading strategies.
                 </p>
                 <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'};">
                     Upgrade to Premium to unlock this feature and supercharge your analysis!
                 </p>
                 <div style="text-align: center; margin-top: 20px;">
-                    <a href="#" onclick="window.parent.location.href = '{st.secrets.APP_URL}?page=profile'" target="_self" style="
+                    <a href="#" onclick="window.parent.location.href = '{st.secrets.get("APP_URL", "")}?page=profile'" target="_self" style="
                         background-color: #007bff;
                         color: white;
                         padding: 10px 20px;
@@ -1208,7 +1195,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                         
                         # Convert interval to seconds (approx)
                         interval_map = {"1min": 60, "5min": 300, "15min": 900, "30min": 1800, "1h": 3600}
-                        # --- FINNHUB CHANGE: Use interval_key ---
                         interval_seconds = interval_map.get(selected_interval, 3600)
                         
                         # Need at least 2 new bars to check
@@ -1218,20 +1204,17 @@ elif st.session_state.page == "app" and st.session_state.user:
                             continue # Not enough time has passed
                         
                         # Fetch just enough new data
-                        # --- FINNHUB CHANGE: Use interval_key ---
                         df_new = fetch_data(alert['pair'], selected_interval, output_size=bars_to_fetch)
                         if df_new.empty:
                             continue
                         
                         # Find the entry bar in the new data
                         try:
-                            # Finnhub data is UTC-aware, so we make alert_time UTC-aware
-                            alert_time_utc = alert_time.replace(tzinfo=timezone.utc)
-                            entry_bar_index = df_new.index.get_loc(alert_time_utc)
+                            entry_bar_index = df_new.index.get_loc(alert_time)
                             df_future = df_new.iloc[entry_bar_index + 1:]
                         except KeyError:
                             # Check if data is too old (e.g., entry bar not in the latest 500 candles)
-                            if alert_time.replace(tzinfo=timezone.utc) < df_new.index.min():
+                            if alert_time < df_new.index.min():
                                 # Can't determine, data is too old
                                 db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": "EXPIRED"})
                             continue
