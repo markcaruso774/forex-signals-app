@@ -95,7 +95,7 @@ def login(email, password):
         st.session_state.user = user
         
         # Get user's full data from the database
-        user_data = db.child("users").child(user['localId']).get().val()
+        user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
             # 1. Load subscription status
