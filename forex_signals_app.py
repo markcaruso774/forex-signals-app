@@ -971,6 +971,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
+    # --- ADD MARKERS (Might not show, but Chart will work) ---
     chart.markers = buy_markers + sell_markers
 
     # 3. RENDER THE CHART
@@ -1362,5 +1363,3 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
-
-
