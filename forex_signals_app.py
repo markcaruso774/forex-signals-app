@@ -851,10 +851,10 @@ elif st.session_state.page == "app" and st.session_state.user:
     with st.spinner("Calculating indicators..."):
         df_indicators = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
     
-    # --- MARKER BUG FIX: Apply strategy to the *full* dataframe (with NaNs) ---
+    # --- CHART FIX: Apply strategy to the FULL dataframe (with NaNs) ---
     with st.spinner(f"Applying Strategy: {strategy_name}..."):
         df_final = apply_strategy(df_indicators.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
-    # --- End of Bug Fix ---
+    # --- End of Chart Fix ---
         
     # === RUN MAIN BACKTESTING ON BUTTON CLICK ===
     if run_backtest_button:
@@ -895,7 +895,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         st.subheader("Detailed Trade Log")
         
-        # --- NEW: Capitalize trade log headers ---
+        # Capitalize headers
         trade_df_display = results['trade_df'].copy()
         trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
         st.dataframe(trade_df_display, width='stretch') 
@@ -923,9 +923,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     chart.price_scale_options = {"borderColor": "#777"}
     chart.time_scale_options = {"borderColor": "#777"}
     
-    # --- Enable crosshair (Note: Does not show OHLC box) ---
+    # --- Enable crosshair ---
     chart.crosshair_options = {
-        "mode": 1, # 0=Normal, 1=Magnet
+        "mode": 1, 
         "vertLine": {"color": "#C0C0C0", "style": 2, "width": 1},
         "horzLine": {"color": "#C0C0C0", "style": 2, "width": 1}
     }
@@ -935,22 +935,23 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_reset = df_final.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # --- RESTORED FIX: Convert back to Unix Timestamp (Int) ---
-    # This fixes the "vertical line" chart bug.
-    df_reset['time'] = df_reset[index_col_name].apply(lambda x: int(x.timestamp()))
+    # --- CHART FIX 1: Revert to simple string format 'YYYY-MM-DD HH:MM' ---
+    # This is the most reliable string format for intraday lightweight-charts
+    df_reset['time'] = df_reset[index_col_name].dt.strftime('%Y-%m-%d %H:%M')
     
-    df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
-    sma_data = df_reset[['time', 'sma']].dropna() 
+    # --- CHART FIX 2: Drop NaNs before plotting to avoid chart confusion ---
+    # Note: We drop NaNs just for the chart view, but keep the markers aligned
+    df_chart_clean = df_reset.dropna(subset=['sma']) # Drop rows where SMA is NaN
     
-    buy_signals = df_final[df_final['signal'] == 1].reset_index()
-    sell_signals = df_final[df_final['signal'] == -1].reset_index()
+    df_chart_data = df_chart_clean[['time', 'open', 'high', 'low', 'close']]
+    sma_data = df_chart_clean[['time', 'sma']]
     
-    buy_index_col = buy_signals.columns[0]
-    sell_index_col = sell_signals.columns[0]
+    # --- PREPARE MARKERS WITH ALIGNMENT ---
+    # Filter signals to only include those present in the cleaned chart data
+    valid_times = set(df_chart_clean['time'])
     
-    # --- RESTORED FIX: Convert markers to Unix Timestamp (Int) as well ---
-    buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: int(x.timestamp()))
-    sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: int(x.timestamp()))
+    buy_signals = df_chart_clean[df_chart_clean['signal'] == 1]
+    sell_signals = df_chart_clean[df_chart_clean['signal'] == -1]
 
     buy_markers = [
         {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
@@ -962,7 +963,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     ]
     
     # 2. LOAD DATA INTO THE CHART
-    chart.set(df_chart)
+    chart.set(df_chart_data)
     
     sma_line = chart.create_line(
         name="sma",  
@@ -971,7 +972,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
-    # --- ADD MARKERS (Might not show, but Chart will work) ---
+    # --- Set Markers ---
     chart.markers = buy_markers + sell_markers
 
     # 3. RENDER THE CHART
@@ -982,15 +983,15 @@ elif st.session_state.page == "app" and st.session_state.user:
         rows=2 if show_rsi and show_macd else 1,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.1, # <-- COMPRESSED CHART FIX
+        vertical_spacing=0.1, # Correct spacing
         row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0]
     )
     
-    # --- COMPRESSED CHART FIX: Calculate num_subplots ---
+    # --- Calculate num_subplots ---
     num_subplots = (1 if show_rsi else 0) + (1 if show_macd else 0)
     current_row = 1
     if show_rsi:
-        # --- FIX: Use df_final, which is the full 500-row df ---
+        # Use df_final (full data) for Plotly
         fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
         fig_subplots.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=current_row, col=1)
         fig_subplots.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=current_row, col=1)
@@ -999,7 +1000,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         current_row += 1
         
     if show_macd:
-        # --- FIX: Use df_final, which is the full 500-row df ---
         fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
         fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
         colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df_final['macd_hist']]
@@ -1008,10 +1008,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         fig_subplots.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
         
     if show_rsi or show_macd:
-        # --- COMPRESSED CHART FIX: Check num_subplots before updating layout ---
         if num_subplots > 0:
             fig_subplots.update_layout(
-                # --- COMPRESSED CHART FIX: Use num_subplots * 300 ---
                 height=300 * num_subplots, 
                 template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white',
                 xaxis_rangeslider_visible=False,
