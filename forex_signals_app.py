@@ -332,21 +332,27 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        # --- CSS FIXES for Metrics, Scanner Labels ---
+        # --- CSS FIXES for Metrics, Scanner Labels, and SIDEBAR BACKGROUND ---
         return f"""<style>
-            .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
+            /* FORCE APP & SIDEBAR BACKGROUND TO DARK */
+            .stApp {{ background-color: #0e1117; color: #f0f0f0; }}
+            section[data-testid="stSidebar"] {{ background-color: #0e1117; }}
+            
+            /* Fix text colors to ensure visibility */
+            .stMarkdown, .stText, p, h1, h2, h3 {{ color: #f0f0f0 !important; }}
+            
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
             .results-box {{
-                border: 1px solid {'#555' if dark else '#ddd'};
+                border: 1px solid #555;
                 border-radius: 5px;
                 padding: 10px;
                 margin-top: -10px;
                 margin-bottom: 10px;
-                background-color: {'#1a1a1a' if dark else '#f9f9f9'};
+                background-color: #1a1a1a;
             }}
             .results-text {{
                 font-size: 0.9em;
-                color: {'#bbb' if dark else '#333'};
+                color: #bbb;
             }}
             
             /* Alert History Table Styles */
@@ -358,27 +364,26 @@ elif st.session_state.page == "app" and st.session_state.user:
             .alert-history-table th, .alert-history-table td {{
                 padding: 4px 6px;
                 text-align: left;
-                border-bottom: 1px solid {'#444' if dark else '#ddd'};
+                border-bottom: 1px solid #444;
+                color: #f0f0f0;
             }}
             .alert-history-table th {{
                 font-weight: bold;
-                color: {'#eee' if dark else '#333'};
+                color: #eee;
             }}
             .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
             .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
             .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
 
-            /* --- NEW: Fix for faint metric labels --- */
-            /* Targets the label above the metric value */
+            /* Fix for faint metric labels */
             div[data-testid="stMetric"] > label {{
-                color: {'#aaa' if dark else '#555'};
+                color: #f0f0f0;
                 font-weight: bold;
             }}
 
-            /* --- NEW: Fix for dark scanner labels --- */
-            /* Targets the markdown text inside the scanner card */
+            /* Fix for scanner labels */
             div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{
-                color: {'#f0f0f0' if dark else '#212529'};
+                color: #f0f0f0;
             }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
@@ -462,7 +467,13 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     if is_premium:
         selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
-        st.sidebar.success("Premium Active – All Features Unlocked")
+        # --- FIX: Replaced unreadable st.success with Custom Badge ---
+        st.sidebar.markdown(f"""
+            <div style="background-color: rgba(38, 166, 154, 0.2); border: 1px solid #26a69a; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+                <p style="color: #26a69a; font-weight: bold; margin: 0; text-align: center;">✨ Premium Active</p>
+                <p style="color: #26a69a; font-size: 0.8em; margin: 0; text-align: center;">All Features Unlocked</p>
+            </div>
+        """, unsafe_allow_html=True)
     else:
         selected_pair = FREE_PAIR
         st.sidebar.warning("Free Tier: EUR/USD Only")
@@ -1316,3 +1327,5 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
+
+
