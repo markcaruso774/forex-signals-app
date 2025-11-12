@@ -332,59 +332,62 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        # --- CSS FIXES for Button Colors, Unreadable Text, and Spacing ---
+        # --- CSS FIXES for Metrics, Scanner Labels, and SIDEBAR BACKGROUND ---
         return f"""<style>
-            /* 1. FORCE DARK BACKGROUND for whole app and sidebar */
+            /* FORCE APP & SIDEBAR BACKGROUND TO DARK */
             .stApp {{ background-color: #0e1117; color: #f0f0f0; }}
             section[data-testid="stSidebar"] {{ background-color: #0e1117; }}
             
-            /* 2. FORCE TEXT COLOR to White so it's visible on dark background */
+            /* Fix text colors to ensure visibility */
             .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: #f0f0f0 !important; }}
             
-            /* 3. FORCE BLUE BUTTONS (Overrides Red) */
-            div.stButton > button:first-child {{
-                background-color: #007bff !important; /* Bright Blue */
-                color: white !important;
-                border: none;
+            .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
+            .results-box {{
+                border: 1px solid #555;
+                border-radius: 5px;
+                padding: 10px;
+                margin-top: -10px;
+                margin-bottom: 10px;
+                background-color: #1a1a1a;
             }}
-            div.stButton > button:hover {{
-                background-color: #0056b3 !important; /* Darker Blue on Hover */
-                color: white !important;
+            .results-text {{
+                font-size: 0.9em;
+                color: #bbb;
             }}
             
-            /* 4. Signal Colors */
-            .buy-signal {{ color: #26a69a !important; }} 
-            .sell-signal {{ color: #ef5350 !important; }}
-            
-            /* 5. Alert History Table Styles */
+            /* Alert History Table Styles - FIXED SPACING & FORMAT */
             .alert-history-table {{
                 font-size: 0.85em;
                 width: 100%;
                 border-collapse: collapse;
-                table-layout: fixed;
+                table-layout: fixed; /* Prevents overflow */
             }}
             .alert-history-table th, .alert-history-table td {{
-                padding: 4px 2px;
+                padding: 4px 2px; /* Reduced padding */
                 text-align: left;
                 border-bottom: 1px solid #444;
-                color: #f0f0f0 !important; /* Force white text */
+                color: #f0f0f0;
                 overflow: hidden;
-                text-overflow: ellipsis;
+                text-overflow: ellipsis; /* Handles long text */
                 white-space: nowrap;
             }}
             .alert-history-table th {{
                 font-weight: bold;
-                color: #eee !important;
+                color: #eee;
             }}
-            
-            /* Status Colors */
-            .alert-status-RUNNING {{ color: #ff9800 !important; font-weight: bold; }}
-            .alert-status-PROFIT {{ color: #26a69a !important; font-weight: bold; }}
-            .alert-status-LOSS {{ color: #ef5350 !important; font-weight: bold; }}
+            .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
+            .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
+            .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
 
-            /* 6. Fix for Strategy Scanner Labels */
+            /* Fix for faint metric labels */
+            div[data-testid="stMetric"] > label {{
+                color: #f0f0f0;
+                font-weight: bold;
+            }}
+
+            /* Fix for scanner labels */
             div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{
-                color: #f0f0f0 !important;
+                color: #f0f0f0;
             }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
@@ -398,7 +401,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === ABOUT THE APP SECTION ===
+    # === ABOUT THE APP SECTION (REWRITTEN FOR CLARITY) ===
     with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
         st.markdown(
             """
@@ -596,7 +599,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         except Exception as e:
             st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
 
-    # --- TELEGRAM ALERT FUNCTION ---
+    # --- TELEGRAM ALERT FUNCTION (UPDATED) ---
     def send_telegram_alert(pair, signal_type, entry, tp, sl):
         """Sends a structured alert message to Telegram."""
         if "TELEGRAM" not in st.secrets:
@@ -604,7 +607,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             
         token = st.secrets["TELEGRAM"].get("BOT_TOKEN")
         
-        # --- Get the user's specific Chat ID from session state ---
+        # --- NEW: Get the user's specific Chat ID from session state ---
         chat_id = st.session_state.get("telegram_chat_id")
         
         if not token or not chat_id:
@@ -1352,5 +1355,3 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
-
-
