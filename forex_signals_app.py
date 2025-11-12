@@ -68,7 +68,7 @@ def sign_up(email, password):
         
         # 2. Create User Profile in DB
         user_data = {"email": email, "subscription_status": "free"}
-        db.child("users").child(user['localId']).set(user_data)
+        db.child("users").child(user['localId']).set(user_data, user['idToken'])
         
         st.session_state.is_premium = False
         st.session_state.page = "app"
