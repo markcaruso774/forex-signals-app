@@ -341,6 +341,17 @@ elif st.session_state.page == "app" and st.session_state.user:
             /* Fix text colors to ensure visibility */
             .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: #f0f0f0 !important; }}
             
+            /* 3. FORCE BLUE BUTTONS (Overrides Red) */
+            div.stButton > button:first-child {{
+                background-color: #007bff !important; /* Bright Blue */
+                color: white !important;
+                border: none;
+            }}
+            div.stButton > button:hover {{
+                background-color: #0056b3 !important; /* Darker Blue on Hover */
+                color: white !important;
+            }}
+            
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
             .results-box {{
                 border: 1px solid #555;
