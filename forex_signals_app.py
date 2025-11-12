@@ -924,23 +924,20 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_reset = df_final.reset_index()
     index_col_name = df_reset.columns[0]
     
-    # --- MARKER FIX: Format time to simple YYYY-MM-DDTHH:MM:SS string ---
-    # --- NOTE: We convert to simple timestamps (int) which lightweight-charts handles best for intraday
+    # --- RESTORED FIX: Convert back to Unix Timestamp (Int) ---
+    # This fixes the "vertical line" chart bug.
     df_reset['time'] = df_reset[index_col_name].apply(lambda x: int(x.timestamp()))
     
-    # --- BUG FIX: This now takes the FULL 500 rows ---
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
-    # --- BUG FIX: We ONLY dropna for the SMA line ---
     sma_data = df_reset[['time', 'sma']].dropna() 
     
-    # --- BUG FIX: Get signals from the FULL 500 row dataframe ---
     buy_signals = df_final[df_final['signal'] == 1].reset_index()
     sell_signals = df_final[df_final['signal'] == -1].reset_index()
     
     buy_index_col = buy_signals.columns[0]
     sell_index_col = sell_signals.columns[0]
     
-    # --- MARKER FIX: Format marker time to INT timestamp as well ---
+    # --- RESTORED FIX: Convert markers to Unix Timestamp (Int) as well ---
     buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: int(x.timestamp()))
     sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: int(x.timestamp()))
 
@@ -963,7 +960,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     )
     sma_line.set(sma_data)
     
-    # --- BUG FIX: This will now have signals to draw ---
     chart.markers = buy_markers + sell_markers
 
     # 3. RENDER THE CHART
@@ -1355,3 +1351,5 @@ elif not st.session_state.user:
     User state:  {st.session_state.user}
     Page state:  {st.session_state.page}
     """)
+
+
