@@ -28,7 +28,7 @@ def initialize_firebase():
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
-                config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
+                config["databaseURL"] = f"https{project_id}-default-rtdb.firebaseio.com/"
             else:
                 config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
         
@@ -332,7 +332,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        # --- NEW CSS for Alert History Table ---
+        # --- CSS FIXES for Metrics, Scanner Labels ---
         return f"""<style>
             .stApp {{ background-color: {'#0e1117' if dark else '#ffffff'}; color: {'#f0f0f0' if dark else '#212529'}; }}
             .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
@@ -367,6 +367,19 @@ elif st.session_state.page == "app" and st.session_state.user:
             .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
             .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
             .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
+
+            /* --- NEW: Fix for faint metric labels --- */
+            /* Targets the label above the metric value */
+            div[data-testid="stMetric"] > label {{
+                color: {'#aaa' if dark else '#555'};
+                font-weight: bold;
+            }}
+
+            /* --- NEW: Fix for dark scanner labels --- */
+            /* Targets the markdown text inside the scanner card */
+            div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{
+                color: {'#f0f0f0' if dark else '#212529'};
+            }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
 
@@ -412,7 +425,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
             **3. The Backtesting Report (Your "Test Results")**
             * Click the **"Run Backtest"** button in the sidebar to generate this report.
-            * This is the most important feature. It takes your *current* sidebar settings and tests them against the 500 past candles shown on the chart.
+            * This is the most important feature. It takes your *current* sidebar settings and tests them against the historical data.
+            * **Note:** The "Data Tested" (e.g., 467 bars) will be less than 500. This is normal. The app correctly removes the first few bars that don't have enough data to calculate indicators (like an SMA).
             * It tells you if your strategy was profitable, its win rate, and shows a full trade-by-trade log.
             * **Use this to test an idea *before* you trust it.**
 
@@ -854,7 +868,11 @@ elif st.session_state.page == "app" and st.session_state.user:
         else: st.info("No resolved trades found with these settings.")
         
         st.subheader("Detailed Trade Log")
-        st.dataframe(results['trade_df'], width='stretch') 
+        
+        # --- NEW: Capitalize trade log headers ---
+        trade_df_display = results['trade_df'].copy()
+        trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
+        st.dataframe(trade_df_display, width='stretch') 
         
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
@@ -1018,11 +1036,14 @@ elif st.session_state.page == "app" and st.session_state.user:
         # Use columns for a cleaner layout
         col_scan1, col_scan2, col_scan3 = st.columns(3)
         with col_scan1:
-            scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=["EUR/USD", "GBP/USD", "USD/JPY"], help="Choose the forex pairs to include in the scan.")
+            # --- NEW: default=[] ---
+            scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=[], help="Choose the forex pairs to include in the scan.")
         with col_scan2:
-            scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=["15min", "1h"], help="Select the timeframes for strategy evaluation.")
+            # --- NEW: default=[] ---
+            scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=[], help="Select the timeframes for strategy evaluation.")
         with col_scan3:
-            scan_strategies = st.multiselect("Select Strategies", all_strategies, default=["RSI Standalone", "MACD Crossover"], help="Pick the strategies you wish to test.")
+            # --- NEW: default=[] ---
+            scan_strategies = st.multiselect("Select Strategies", all_strategies, default=[], help="Pick the strategies you wish to test.")
         
         # --- NEW: Use sidebar settings for the scan ---
         scan_params = {
