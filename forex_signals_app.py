@@ -332,58 +332,59 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
     def apply_theme():
         dark = st.session_state.theme == "dark"
-        # --- CSS FIXES for Metrics, Scanner Labels, and SIDEBAR BACKGROUND ---
+        # --- CSS FIXES for Button Colors, Unreadable Text, and Spacing ---
         return f"""<style>
-            /* FORCE APP & SIDEBAR BACKGROUND TO DARK */
+            /* 1. FORCE DARK BACKGROUND for whole app and sidebar */
             .stApp {{ background-color: #0e1117; color: #f0f0f0; }}
             section[data-testid="stSidebar"] {{ background-color: #0e1117; }}
             
-            /* Fix text colors to ensure visibility */
-            .stMarkdown, .stText, p, h1, h2, h3 {{ color: #f0f0f0 !important; }}
+            /* 2. FORCE TEXT COLOR to White so it's visible on dark background */
+            .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: #f0f0f0 !important; }}
             
-            .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
-            .results-box {{
-                border: 1px solid #555;
-                border-radius: 5px;
-                padding: 10px;
-                margin-top: -10px;
-                margin-bottom: 10px;
-                background-color: #1a1a1a;
+            /* 3. FORCE BLUE BUTTONS (Overrides Red) */
+            div.stButton > button:first-child {{
+                background-color: #007bff !important; /* Bright Blue */
+                color: white !important;
+                border: none;
             }}
-            .results-text {{
-                font-size: 0.9em;
-                color: #bbb;
+            div.stButton > button:hover {{
+                background-color: #0056b3 !important; /* Darker Blue on Hover */
+                color: white !important;
             }}
             
-            /* Alert History Table Styles */
+            /* 4. Signal Colors */
+            .buy-signal {{ color: #26a69a !important; }} 
+            .sell-signal {{ color: #ef5350 !important; }}
+            
+            /* 5. Alert History Table Styles */
             .alert-history-table {{
                 font-size: 0.85em;
                 width: 100%;
                 border-collapse: collapse;
+                table-layout: fixed;
             }}
             .alert-history-table th, .alert-history-table td {{
-                padding: 4px 6px;
+                padding: 4px 2px;
                 text-align: left;
                 border-bottom: 1px solid #444;
-                color: #f0f0f0;
+                color: #f0f0f0 !important; /* Force white text */
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }}
             .alert-history-table th {{
                 font-weight: bold;
-                color: #eee;
+                color: #eee !important;
             }}
-            .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
-            .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
-            .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
+            
+            /* Status Colors */
+            .alert-status-RUNNING {{ color: #ff9800 !important; font-weight: bold; }}
+            .alert-status-PROFIT {{ color: #26a69a !important; font-weight: bold; }}
+            .alert-status-LOSS {{ color: #ef5350 !important; font-weight: bold; }}
 
-            /* Fix for faint metric labels */
-            div[data-testid="stMetric"] > label {{
-                color: #f0f0f0;
-                font-weight: bold;
-            }}
-
-            /* Fix for scanner labels */
+            /* 6. Fix for Strategy Scanner Labels */
             div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{
-                color: #f0f0f0;
+                color: #f0f0f0 !important;
             }}
         </style>"""
     st.markdown(apply_theme(), unsafe_allow_html=True)
@@ -397,7 +398,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === ABOUT THE APP SECTION (REWRITTEN FOR CLARITY) ===
+    # === ABOUT THE APP SECTION ===
     with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
         st.markdown(
             """
@@ -467,11 +468,11 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     if is_premium:
         selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
-        # --- FIX: Replaced unreadable st.success with Custom Badge ---
+        # Custom Badge for Premium status
         st.sidebar.markdown(f"""
             <div style="background-color: rgba(38, 166, 154, 0.2); border: 1px solid #26a69a; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                <p style="color: #26a69a; font-weight: bold; margin: 0; text-align: center;">✨ Premium Active</p>
-                <p style="color: #26a69a; font-size: 0.8em; margin: 0; text-align: center;">All Features Unlocked</p>
+                <p style="color: #26a69a !important; font-weight: bold; margin: 0; text-align: center;">✨ Premium Active</p>
+                <p style="color: #26a69a !important; font-size: 0.8em; margin: 0; text-align: center;">All Features Unlocked</p>
             </div>
         """, unsafe_allow_html=True)
     else:
@@ -595,7 +596,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         except Exception as e:
             st.error(f"API Error fetching {symbol}: {e}"); return pd.DataFrame()
 
-    # --- TELEGRAM ALERT FUNCTION (UPDATED) ---
+    # --- TELEGRAM ALERT FUNCTION ---
     def send_telegram_alert(pair, signal_type, entry, tp, sl):
         """Sends a structured alert message to Telegram."""
         if "TELEGRAM" not in st.secrets:
@@ -603,7 +604,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             
         token = st.secrets["TELEGRAM"].get("BOT_TOKEN")
         
-        # --- NEW: Get the user's specific Chat ID from session state ---
+        # --- Get the user's specific Chat ID from session state ---
         chat_id = st.session_state.get("telegram_chat_id")
         
         if not token or not chat_id:
@@ -921,7 +922,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     index_col_name = df_reset.columns[0]
     
     # --- MARKER FIX: Format time to simple YYYY-MM-DDTHH:MM:SS string ---
-    df_reset['time'] = df_reset[index_col_name].apply(lambda x: x.strftime('%Y-%m-%dT%H:%M:%S'))
+    # --- NOTE: We convert to simple timestamps (int) which lightweight-charts handles best for intraday
+    df_reset['time'] = df_reset[index_col_name].apply(lambda x: int(x.timestamp()))
     
     # --- BUG FIX: This now takes the FULL 500 rows ---
     df_chart = df_reset[['time', 'open', 'high', 'low', 'close']]
@@ -935,9 +937,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     buy_index_col = buy_signals.columns[0]
     sell_index_col = sell_signals.columns[0]
     
-    # --- MARKER FIX: Format marker time to the exact same string ---
-    buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: x.strftime('%Y-%m-%dT%H:%M:%S'))
-    sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: x.strftime('%Y-%m-%dT%H:%M:%S'))
+    # --- MARKER FIX: Format marker time to INT timestamp as well ---
+    buy_signals['time'] = buy_signals[buy_index_col].apply(lambda x: int(x.timestamp()))
+    sell_signals['time'] = sell_signals[sell_index_col].apply(lambda x: int(x.timestamp()))
 
     buy_markers = [
         {"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"}
@@ -1290,7 +1292,23 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     alert_list = load_alerts_from_firebase(user_id)
 
-    if st.sidebar.button("Refresh Outcomes", use_container_width=True):
+    # --- FIX: Sidebar Button Styling ---
+    st.sidebar.markdown("""
+        <style>
+        div.stButton > button:first-child {
+            background-color: #007bff;
+            color: white;
+            border: none;
+        }
+        div.stButton > button:hover {
+            background-color: #0056b3;
+            color: white;
+            border: none;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    if st.sidebar.button("Refresh Outcomes", use_container_width=True, key="refresh_outcomes_btn"):
         update_alert_outcomes(alert_list)
         # Rerun to reload the table
         st.rerun()
@@ -1301,8 +1319,15 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         # Show top 10 most recent alerts
         for alert in alert_list[:10]:
-            # Format time to be more readable
-            time_str = datetime.fromisoformat(alert['entry_time']).strftime('%m-%d %H:%M')
+            # Format time to be more readable (e.g. 11/12 20:00)
+            try:
+                # Try ISO format first
+                dt = datetime.fromisoformat(alert['entry_time'])
+            except ValueError:
+                # Fallback for potential legacy data
+                dt = datetime.now() 
+
+            time_str = dt.strftime('%m/%d %H:%M')
             status_class = f"alert-status-{alert['status']}"
             table_html += f"<tr><td>{time_str}</td><td>{alert['pair']}</td><td>{alert['type']}</td><td><span class='{status_class}'>{alert['status']}</span></td></tr>"
         
