@@ -251,12 +251,12 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon="🧙‍♂️", layout="centered")
 
     if auth is None or db is None:
-        st.title("PipWizard 🧙‍♂️")
+        st.title("PipWizard 🧙‍♂️ 📈📉")
         st.error("Application failed to initialize.")
         st.warning("Could not connect to the authentication service.")
         st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue.")
     else:
-        st.title(f"Welcome to PipWizard 🧙‍♂️")
+        st.title(f"Welcome to PipWizard 🧙‍♂️ 📈📉")
         st.text("Please log in or sign up to continue.")
         action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
         email = st.text_input("Email")
@@ -281,7 +281,7 @@ if st.session_state.page == "login":
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile - PipWizard", page_icon="🧙‍♂️", layout="centered")
     
-    st.title(f"Profile & Subscription 🧙‍♂️")
+    st.title(f"Profile & Subscription 🧙‍♂️ 📈📉")
     
     if st.session_state.user and 'email' in st.session_state.user:
         st.write(f"Logged in as: `{st.session_state.user['email']}`")
@@ -400,18 +400,18 @@ elif st.session_state.page == "app" and st.session_state.user:
     # === HEADER ===
     col1, col2 = st.columns([6, 1])
     with col1:
-        st.title("PipWizard 🧙‍♂️ – Live Forex Signals")
+        st.title("PipWizard 🧙‍♂️ 📈📉 – Live Signals")
     with col2:
         theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === ABOUT THE APP SECTION (FULL TEXT) ===
+    # === ABOUT THE APP SECTION (RESTORED ORIGINAL CONTENT) ===
     with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
         st.markdown(
             """
             ### What is PipWizard?
-            PipWizard is a tool to help you **test trading strategies** before you use them.
+            PipWizard is a tool to help you **test trading strategies** before you use them. 
             
             It is **not** a "get rich quick" bot. It is a decision-support tool that lets you:
             1.  **TEST** your ideas (e.g., "What if I buy when RSI is low?") on *historical data* to see if they would have been profitable.
@@ -428,27 +428,45 @@ elif st.session_state.page == "app" and st.session_state.user:
             * **Strategy:** Pick a strategy from the list (e.g., "RSI Standalone").
             * **Indicator Config:** Set the parameters for your chosen strategy (e.g., RSI Period).
             * **Backtesting Parameters:** Set your risk management rules (Stop Loss, Take Profit, etc.).
-            * **Save My Settings:** Click this to save all your sidebar settings to your account.
-            * **Alert History:** A new table at the bottom of the sidebar logs all signals and their outcomes.
-            
+            * **Save My Settings:** Click this to save all your sidebar settings to your account, so they load automatically the next time you log in.
+            * **Alert History:** A new table at the bottom of the sidebar that logs all signals and their outcomes. Click **"Refresh Outcomes"** to check the status of running trades.
+
             **2. The Main Chart (Your "Live" View)**
             * This chart shows you the most recent price data.
             * The "BUY" and "SELL" arrows show you where your **currently selected strategy** has generated signals.
-            * **OHLC Data:** Use your mouse crosshair to hover over any candle.
-            
+            * **OHLC Data:** Use your mouse crosshair to hover over any candle to see its Open, High, Low, and Close price.
+            * This chart automatically refreshes every minute. If a new signal appears, it will be saved to your "Alert History."
+
             **3. The Backtesting Report (Your "Test Results")**
             * Click the **"Run Backtest"** button in the sidebar to generate this report.
             * This is the most important feature. It takes your *current* sidebar settings and tests them against the historical data.
+            * **Note:** The "Data Tested" (e.g., 467 bars) will be less than 500. This is normal. The app correctly removes the first few bars that don't have enough data to calculate indicators (like an SMA).
             * It tells you if your strategy was profitable, its win rate, and shows a full trade-by-trade log.
-            
+            * **Use this to test an idea *before* you trust it.**
+
             **4. The Strategy Scanner (Premium Feature)**
             * Located at the bottom of the page.
-            * This is a "backtest of backtests." It uses your **personal sidebar settings** to test multiple strategies at once.
+            * This is a "backtest of backtests." It now uses your **personal sidebar settings** (Capital, SL, TP) to test multiple strategies, giving you a report that matches your trading style.
+
+            ---
+
+            ### Feature Tiers
+            
+            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
+            | :--- | :--- | :--- |
+            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
+            | **All Strategies** | ✅ Yes | ✅ Yes |
+            | **Save Settings** | ✅ Yes | ✅ Yes |
+            | **Live Signal Alerts** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **Alert History Log** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
+            | **🚀 Strategy Scanner**| ❌ No | ✅ **Unlocked** |
+            
             """
         )
     
     # === SIDEBAR & CONTROLS ===
-    st.sidebar.title("PipWizard 🧙‍♂️")
+    st.sidebar.title("PipWizard 🧙‍♂️ 📈📉")
     
     user_id = st.session_state.user['localId']
     user_email = st.session_state.user.get('email', 'User')
@@ -1004,5 +1022,5 @@ elif st.session_state.page == "app" and st.session_state.user:
 # === 8. ERROR HANDLING ===
 elif not st.session_state.user:
     st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
-    st.title("PipWizard 🧙‍♂️")
+    st.title("PipWizard 🧙‍♂️ 📈📉")
     st.error("Application failed to initialize.")
