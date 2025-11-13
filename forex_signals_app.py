@@ -63,11 +63,9 @@ def sign_up(email, password):
         st.error("Auth service not available. Contact support.")
         return
     try:
-        # 1. Create User in Auth
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
         
-        # 2. Create User Profile in DB (SECURE WRITE WITH TOKEN)
         user_data = {"email": email, "subscription_status": "free"}
         db.child("users").child(user['localId']).set(user_data, user['idToken'])
         
@@ -94,17 +92,15 @@ def login(email, password):
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
         
-        # Get user's full data from the database (SECURE READ WITH TOKEN)
         user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
-            # 1. Load subscription status
             if user_data.get("subscription_status") == "premium":
                 st.session_state.is_premium = True
             else:
                 st.session_state.is_premium = False
 
-            # 2. Load saved settings
+            # Load saved settings
             settings = user_data.get("settings", {}) 
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
@@ -120,8 +116,6 @@ def login(email, password):
             st.session_state.risk_pct = settings.get("risk_pct", 1.0)
             st.session_state.sl_pips = settings.get("sl_pips", 50)
             st.session_state.tp_pips = settings.get("tp_pips", 100)
-            
-            # Load Telegram Chat ID
             st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
             
         else:
@@ -141,22 +135,21 @@ def login(email, password):
         st.error(f"Login Failed: {error_message}")
 
 def logout():
-    """Logs out the user and resets session state."""
     st.session_state.user = None
     st.session_state.is_premium = False
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS ===
+# === 4. PAYSTACK PAYMENT FUNCTIONS (ROBUST KEYS) ===
 def create_payment_link(email, user_id):
     """Calls Paystack API to create a one-time payment link."""
-    # NOTE: This is set to 10000 kobo (100 Naira) for testing.
     test_amount_kobo = 10000 
     
-    if "PAYSTACK_LIVE" in st.secrets:
-        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
-    elif "PAYSTACK_TEST" in st.secrets:
+    # Prioritize Test Keys if available, otherwise fallback to Live
+    if "PAYSTACK_TEST" in st.secrets:
         secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
+    elif "PAYSTACK_LIVE" in st.secrets:
+        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
     else:
         st.error("Paystack secret key not configured in Streamlit Secrets.")
         return None, None
@@ -201,10 +194,11 @@ def create_payment_link(email, user_id):
 
 def verify_payment(reference):
     """Calls Paystack to verify a transaction reference."""
-    if "PAYSTACK_LIVE" in st.secrets:
-        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
-    elif "PAYSTACK_TEST" in st.secrets:
+    # Use the same logic to find the correct key
+    if "PAYSTACK_TEST" in st.secrets:
         secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
+    elif "PAYSTACK_LIVE" in st.secrets:
+        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
     else:
         st.error("Services not initialized.")
         return False
@@ -217,47 +211,54 @@ def verify_payment(reference):
         response_data = response.json()
 
         if response_data.get("status") and response_data["data"]["status"] == "success":
-            st.success("Payment successful! Your account is now Premium.")
-            
             metadata = response_data["data"].get("metadata", {})
             user_id = metadata.get("user_id")
             
             if user_id and st.session_state.user:
+                # Only update if we have a valid logged-in session
                 token = st.session_state.user['idToken']
                 db.child("users").child(user_id).update({"subscription_status": "premium"}, token)
                 
                 st.session_state.is_premium = True
                 st.balloons()
-                st.session_state.page = "app" 
+                st.success("Premium Activated Successfully!")
                 
+                # Clear URL params so we don't verify again
                 try:
                     st.query_params.clear()
                 except:
                     pass 
-                st.rerun()
+                return True
             else:
-                st.error("Payment verified, but session lost. Please log in again to see changes.")
-            return True
+                # Payment is valid, but user needs to log in
+                return True
         else:
-            st.error("Payment verification failed. Please try again or contact support.")
+            st.error("Payment verification failed.")
             return False
             
     except Exception as e:
         st.error(f"Error verifying payment: {e}")
         return False
 
-# === 5. LOGIN/SIGN UP PAGE ===
+# === 5. LOGIN/SIGN UP PAGE (WITH SMART DETECTION) ===
 if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon="🧙‍♂️", layout="centered")
 
     if auth is None or db is None:
         st.title("PipWizard 🧙‍♂️ 📈📉")
         st.error("Application failed to initialize.")
-        st.warning("Could not connect to the authentication service.")
-        st.info("This may be due to missing Streamlit Secrets or a Firebase setup issue.")
     else:
         st.title(f"Welcome to PipWizard 🧙‍♂️ 📈📉")
-        st.text("Please log in or sign up to continue.")
+        
+        # --- SMART PAYMENT DETECTION ---
+        # If user returns from Paystack, the URL has a 'trxref'.
+        # We show a helpful message so they know what to do.
+        query_params = st.query_params
+        if "trxref" in query_params:
+            st.info("✅ **Payment Detected!** Please log in to sync your Premium status.")
+        else:
+            st.text("Please log in or sign up to continue.")
+            
         action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
@@ -319,7 +320,8 @@ elif st.session_state.page == "profile":
 elif st.session_state.page == "app" and st.session_state.user:
     st.set_page_config(page_title="PipWizard", page_icon="🧙‍♂️", layout="wide")
 
-    # --- Check for Payment Callback ---
+    # --- Check for Payment Callback (AUTO-ACTIVATE) ---
+    # This runs immediately after the user logs in if they have a payment waiting
     query_params = st.query_params
     if "trxref" in query_params:
         reference = query_params["trxref"]
@@ -360,7 +362,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             }}
             
             /* --- FIX: WHITE INPUT BOXES --- */
-            /* Forces input fields to be white with black text */
             div[data-testid="stTextInput"] input {{
                 background-color: #ffffff !important;
                 color: #000000 !important;
@@ -406,7 +407,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === ABOUT THE APP SECTION (RESTORED ORIGINAL CONTENT) ===
+    # === ABOUT THE APP SECTION (ORIGINAL CONTENT) ===
     with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
         st.markdown(
             """
