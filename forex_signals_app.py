@@ -390,7 +390,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             except Exception as e:
                 st.sidebar.error(f"Failed to save settings: {e}")
 
-    # === HYBRID DATA FETCHER ===
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
         # 1. YAHOO (For Scanner/Backtest - Unlimited)
@@ -627,9 +626,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         st.subheader("Detailed Trade Log")
         trade_df_display = results['trade_df'].copy()
-        # FIX: Clean Headers and Table Width
+        # Clean Headers
         trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
-        st.dataframe(trade_df_display, width=1000) # REPLACED use_container_width with specific width to silence warning
+        st.dataframe(trade_df_display, width=1000) 
         
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
@@ -663,6 +662,30 @@ elif st.session_state.page == "app" and st.session_state.user:
     sma_line.set(sma_data)
     chart.markers = buy_markers + sell_markers
     chart.load()
+
+    # === ECONOMIC CALENDAR (NEW) ===
+    st.markdown("---")
+    def show_economic_calendar():
+        st.subheader("📅 Economic Calendar")
+        calendar_html = """
+        <div class="tradingview-widget-container">
+          <div class="tradingview-widget-container__widget"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+          {
+          "width": "100%",
+          "height": "500",
+          "colorTheme": "dark",
+          "isTransparent": true,
+          "locale": "en",
+          "importanceFilter": "-1,0,1",
+          "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD"
+        }
+          </script>
+        </div>
+        """
+        components.html(calendar_html, height=520, scrolling=True)
+    
+    show_economic_calendar()
 
     # === SUBPLOTS ===
     fig_subplots = make_subplots(rows=2 if show_rsi and show_macd else 1, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0])
