@@ -7,6 +7,6 @@ twelvedata
 pyrebase4
 lightweight-charts>=1.0.8
 requests
-ta-lib-bin
+Ta-Lib
 google-cloud-storage
 setuptools
