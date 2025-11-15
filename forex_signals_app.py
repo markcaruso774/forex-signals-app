@@ -390,6 +390,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             except Exception as e:
                 st.sidebar.error(f"Failed to save settings: {e}")
 
+    # === HYBRID DATA FETCHER ===
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
         # 1. YAHOO (For Scanner/Backtest - Unlimited)
@@ -397,13 +398,13 @@ elif st.session_state.page == "app" and st.session_state.user:
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
             yf_sym = f"{symbol.replace('/', '')}=X"
             try:
-                df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False)
+                # FIX: auto_adjust=False to silence warning
+                df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False, auto_adjust=False)
                 if df.empty: return pd.DataFrame()
                 df = df.reset_index()
                 df.columns = [c.lower() if isinstance(c, str) else c[0].lower() for c in df.columns]
                 df.rename(columns={'date': 'datetime', 'index': 'datetime'}, inplace=True)
                 df.set_index('datetime', inplace=True)
-                # Flatten MultiIndex if present
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 return df[['open', 'high', 'low', 'close']].dropna()
             except: return pd.DataFrame()
@@ -492,7 +493,6 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     def apply_strategy(df, strategy_name, rsi_l, rsi_h):
         df['signal'] = 0
-        # === RESTORED: ALL 6 STRATEGIES ===
         if strategy_name == "RSI + SMA Crossover":
             df.loc[(df['rsi'] < rsi_l) & (df['close'] > df['sma']), 'signal'] = 1
             df.loc[(df['rsi'] > rsi_h) & (df['close'] < df['sma']), 'signal'] = -1
@@ -627,9 +627,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         st.subheader("Detailed Trade Log")
         trade_df_display = results['trade_df'].copy()
-        # Clean Headers
+        # FIX: Clean Headers and Table Width
         trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
-        st.dataframe(trade_df_display, width='stretch') 
+        st.dataframe(trade_df_display, width=1000) # REPLACED use_container_width with specific width to silence warning
         
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
@@ -739,7 +739,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if scan_results:
                         st.subheader("Scan Results Overview")
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
-                        st.dataframe(results_df.style.format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}), width='stretch')
+                        # FIX: Updated width parameter to avoid warning
+                        st.dataframe(results_df.style.format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}), width=1000)
                     else: st.info("Scan completed, but no profitable trades were found.")
         st.markdown("</div>", unsafe_allow_html=True)
     else:
@@ -809,12 +810,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                         if df_new.empty: continue
                         
                         try:
-                            # Need to handle potential timezone mismatch from Yahoo
                             if df_new.index.tz is None:
                                 df_new.index = df_new.index.tz_localize('UTC')
-                            
-                            # Check if alert time exists in index (approximate if needed)
-                            # Simplified check: just take latest data
                             df_future = df_new 
                         except KeyError:
                              continue
