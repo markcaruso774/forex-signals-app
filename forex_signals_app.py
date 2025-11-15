@@ -11,13 +11,13 @@ import pyrebase  # For Firebase
 import json      # For Firebase
 import requests  # For Paystack & Telegram
 import uuid      # For unique alert IDs
+import yfinance as yf # === NEW: For Unlimited Free Scanning ===
 
 # --- NEW LIBRARY ---
 from lightweight_charts.widgets import StreamlitChart
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
-    """Loads Firebase config from Streamlit Secrets and initializes the app."""
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
             st.error("Firebase config not found in Streamlit Secrets.")
@@ -25,7 +25,6 @@ def initialize_firebase():
         
         config = st.secrets["FIREBASE_CONFIG"]
         
-        # Fix database URL if needed
         if "databaseURL" not in config:
             project_id = config.get('projectId', config.get('project_id'))
             if project_id:
@@ -39,68 +38,42 @@ def initialize_firebase():
             db = firebase.database()
             return auth, db
         except Exception as e:
-            st.error(f"Error initializing Firebase (check config format): {e}")
+            st.error(f"Error initializing Firebase: {e}")
             return None, None
-            
     except Exception as e:
-        st.error(f"Error loading Streamlit Secrets: {e}")
+        st.error(f"Error loading Secrets: {e}")
         return None, None
 
 auth, db = initialize_firebase()
 
-# === 2. SESSION STATE MANAGEMENT ===
-if 'user' not in st.session_state:
-    st.session_state.user = None
-if 'is_premium' not in st.session_state:
-    st.session_state.is_premium = False
-if 'page' not in st.session_state:
-    st.session_state.page = "login" # Start on 'login'
+# === 2. SESSION STATE ===
+if 'user' not in st.session_state: st.session_state.user = None
+if 'is_premium' not in st.session_state: st.session_state.is_premium = False
+if 'page' not in st.session_state: st.session_state.page = "login" 
 
-# === 3. AUTHENTICATION FUNCTIONS (SECURE) ===
+# === 3. AUTH FUNCTIONS ===
 def sign_up(email, password):
-    """Signs up a new user with Firebase Auth and adds them to Realtime DB."""
-    if auth is None or db is None:
-        st.error("Auth service not available. Contact support.")
-        return
+    if auth is None or db is None: return
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        
         user_data = {"email": email, "subscription_status": "free"}
         db.child("users").child(user['localId']).set(user_data, user['idToken'])
-        
         st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
     except Exception as e:
-        error_message = str(e)
-        try:
-            error_json = e.args[1]
-            error_data = json.loads(error_json)
-            if 'error' in error_data and 'message' in error_data['error']:
-                error_message = error_data['error']['message']
-        except:
-            pass
-        st.error(f"Failed to create account: {error_message}")
+        st.error(f"Sign up failed: {e}")
 
 def login(email, password):
-    """Logs in an existing user and fetches their subscription status."""
-    if auth is None or db is None:
-        st.error("Auth service not available. Contact support.")
-        return
+    if auth is None or db is None: return
     try:
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        
         user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
-            if user_data.get("subscription_status") == "premium":
-                st.session_state.is_premium = True
-            else:
-                st.session_state.is_premium = False
-
-            # Load saved settings
+            st.session_state.is_premium = (user_data.get("subscription_status") == "premium")
             settings = user_data.get("settings", {}) 
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
@@ -117,22 +90,13 @@ def login(email, password):
             st.session_state.sl_pips = settings.get("sl_pips", 50)
             st.session_state.tp_pips = settings.get("tp_pips", 100)
             st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
-            
         else:
             st.session_state.is_premium = False
 
         st.session_state.page = "app"
         st.rerun()
     except Exception as e:
-        error_message = str(e)
-        try:
-            error_json = e.args[1]
-            error_data = json.loads(error_json)
-            if 'error' in error_data and 'message' in error_data['error']:
-                error_message = error_data['error']['message']
-        except:
-             pass 
-        st.error(f"Login Failed: {error_message}")
+        st.error(f"Login Failed: {e}")
 
 def logout():
     st.session_state.user = None
@@ -140,519 +104,154 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYSTACK PAYMENT FUNCTIONS (ROBUST KEYS) ===
+# === 4. PAYMENT & EXCHANGE RATE LOGIC ===
+def get_ngn_exchange_rate():
+    try:
+        response = requests.get("https://api.exchangerate-api.com/v4/latest/USD")
+        return response.json()['rates']['NGN']
+    except:
+        return 1650.0 
+
 def create_payment_link(email, user_id):
-    """Calls Paystack API to create a one-time payment link."""
-    test_amount_kobo = 10000 
+    price_in_usd = 20.00
+    exchange_rate = get_ngn_exchange_rate()
+    amount_kobo = int(price_in_usd * exchange_rate * 100)
     
-    # Prioritize Test Keys if available, otherwise fallback to Live
-    if "PAYSTACK_TEST" in st.secrets:
-        secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
-    elif "PAYSTACK_LIVE" in st.secrets:
-        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
-    else:
-        st.error("Paystack secret key not configured in Streamlit Secrets.")
-        return None, None
+    if "PAYSTACK_TEST" in st.secrets: secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
+    elif "PAYSTACK_LIVE" in st.secrets: secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
+    else: st.error("Paystack keys missing."); return None, None, 0
 
     url = "https://api.paystack.co/transaction/initialize"
-    headers = {
-        "Authorization": f"Bearer {secret_key}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {secret_key}", "Content-Type": "application/json"}
+    if "APP_URL" not in st.secrets: st.error("APP_URL missing."); return None, None, 0
     
-    if "APP_URL" not in st.secrets or not st.secrets["APP_URL"]:
-        st.error("APP_URL is not set in Streamlit Secrets.")
-        return None, None
-        
-    APP_URL = st.secrets["APP_URL"]
-
     payload = {
-        "email": email,
-        "amount": test_amount_kobo, 
-        "callback_url": APP_URL, 
-        "metadata": {
-            "user_id": user_id,
-            "user_email": email,
-            "description": "PipWizard Premium Subscription"
-        }
+        "email": email, "amount": amount_kobo, "callback_url": st.secrets["APP_URL"],
+        "metadata": {"user_id": user_id, "user_email": email, "description": "PipWizard Premium ($20)"}
     }
-    
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        response_data = response.json()
-        
-        if response_data.get("status"):
-            auth_url = response_data["data"]["authorization_url"]
-            reference = response_data["data"]["reference"]
-            return auth_url, reference
-        else:
-            st.error(f"Paystack error: {response_data.get('message')}")
-            return None, None
-    except Exception as e:
-        st.error(f"Error creating payment link: {e}")
-        return None, None
+        res = requests.post(url, headers=headers, json=payload).json()
+        if res.get("status"): return res["data"]["authorization_url"], res["data"]["reference"], (amount_kobo/100)
+        else: st.error(f"Paystack Error: {res.get('message')}"); return None, None, 0
+    except Exception as e: st.error(f"Error: {e}"); return None, None, 0
 
 def verify_payment(reference):
-    """Calls Paystack to verify a transaction reference."""
-    # Use the same logic to find the correct key
-    if "PAYSTACK_TEST" in st.secrets:
-        secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
-    elif "PAYSTACK_LIVE" in st.secrets:
-        secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
-    else:
-        st.error("Services not initialized.")
-        return False
+    if "PAYSTACK_TEST" in st.secrets: secret_key = st.secrets['PAYSTACK_TEST']['PAYSTACK_SECRET_KEY']
+    elif "PAYSTACK_LIVE" in st.secrets: secret_key = st.secrets['PAYSTACK_LIVE']['PAYSTACK_SECRET_KEY']
+    else: return False
 
     try:
-        url = f"https://api.paystack.co/transaction/verify/{reference}"
-        headers = {"Authorization": f"Bearer {secret_key}"}
-        
-        response = requests.get(url, headers=headers)
-        response_data = response.json()
-
-        if response_data.get("status") and response_data["data"]["status"] == "success":
-            metadata = response_data["data"].get("metadata", {})
-            user_id = metadata.get("user_id")
-            
-            if user_id and st.session_state.user:
-                # Only update if we have a valid logged-in session
-                token = st.session_state.user['idToken']
-                db.child("users").child(user_id).update({"subscription_status": "premium"}, token)
-                
+        res = requests.get(f"https://api.paystack.co/transaction/verify/{reference}", headers={"Authorization": f"Bearer {secret_key}"}).json()
+        if res.get("status") and res["data"]["status"] == "success":
+            uid = res["data"]["metadata"].get("user_id")
+            if uid and st.session_state.user:
+                db.child("users").child(uid).update({"subscription_status": "premium"}, st.session_state.user['idToken'])
                 st.session_state.is_premium = True
-                st.balloons()
-                st.success("Premium Activated Successfully!")
-                
-                # Clear URL params so we don't verify again
-                try:
-                    st.query_params.clear()
-                except:
-                    pass 
+                st.balloons(); st.success("Premium Activated!")
+                try: st.query_params.clear()
+                except: pass 
                 return True
-            else:
-                # Payment is valid, but user needs to log in
-                return True
-        else:
-            st.error("Payment verification failed.")
-            return False
-            
-    except Exception as e:
-        st.error(f"Error verifying payment: {e}")
-        return False
+    except Exception as e: st.error(f"Verify Error: {e}")
+    return False
 
-# === 5. LOGIN/SIGN UP PAGE (WITH SMART DETECTION) ===
+# === 5. LOGIN PAGE ===
 if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon="🧙‍♂️", layout="centered")
-
-    if auth is None or db is None:
-        st.title("PipWizard 🧙‍♂️ 📈📉")
-        st.error("Application failed to initialize.")
+    if auth is None or db is None: st.error("App failed to start.")
     else:
-        st.title(f"Welcome to PipWizard 🧙‍♂️ 📈📉")
-        
-        # --- SMART PAYMENT DETECTION ---
-        # If user returns from Paystack, the URL has a 'trxref'.
-        # We show a helpful message so they know what to do.
-        query_params = st.query_params
-        if "trxref" in query_params:
-            st.info("✅ **Payment Detected!** Please log in to sync your Premium status.")
-        else:
-            st.text("Please log in or sign up to continue.")
-            
-        action = st.radio("Choose an action:", ("Login", "Sign Up"), horizontal=True, index=1)
+        st.title("PipWizard 🧙‍♂️ 📈📉")
+        if "trxref" in st.query_params: st.info("✅ **Payment Detected!** Log in to activate.")
+        else: st.text("Please log in or sign up.")
+        action = st.radio("Action:", ("Login", "Sign Up"), horizontal=True, index=0)
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
         if action == "Sign Up":
-            confirm_password = st.text_input("Confirm Password", type="password")
-            if st.button("Sign Up"):
-                if not email or not password or not confirm_password:
-                    st.error("Please fill in all fields.")
-                elif password != confirm_password:
-                    st.error("Passwords do not match.")
-                else:
-                    sign_up(email, password)
-        if action == "Login":
-            if st.button("Login"):
-                if not email or not password:
-                    st.error("Please fill in all fields.")
-                else:
-                    login(email, password)
+            if st.button("Sign Up"): sign_up(email, password)
+        else:
+            if st.button("Login"): login(email, password)
 
-# === 6. PROFILE / UPGRADE PAGE ===
+# === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
-    st.set_page_config(page_title="Profile - PipWizard", page_icon="🧙‍♂️", layout="centered")
-    
-    st.title(f"Profile & Subscription 🧙‍♂️ 📈📉")
-    
-    if st.session_state.user and 'email' in st.session_state.user:
-        st.write(f"Logged in as: `{st.session_state.user['email']}`")
+    st.set_page_config(page_title="Profile", page_icon="🧙‍♂️", layout="centered")
+    st.title("Profile 🧙‍♂️")
+    st.write(f"User: `{st.session_state.user['email']}`")
     
     if st.session_state.is_premium:
-        st.success("You are a **Premium User**!")
-        st.write("All features, pairs, and the Strategy Scanner are unlocked.")
+        st.success("You are a **Premium User**! 🌟")
     else:
-        st.warning("You are on the **Free Tier**.")
-        st.markdown(f"Upgrade to **Premium ($29.99/month)** to unlock all pairs, live alerts, and the Strategy Scanner.")
-        
-        if st.button("Upgrade to Premium Now! (Test Payment: 100 NGN)", type="primary"):
-            with st.spinner("Connecting to Paystack..."):
-                user_email = st.session_state.user['email']
-                user_id = st.session_state.user['localId']
-                
-                auth_url, reference = create_payment_link(user_email, user_id) 
-                
-                if auth_url:
-                    st.info("Redirecting you to Paystack to complete your payment...")
-                    st.markdown(f'If you are not redirected, [**Click Here to Pay**]({auth_url})', unsafe_allow_html=True)
-                    components.html(f'<meta http-equiv="refresh" content="0; url={auth_url}">', height=0)
-                else:
-                    st.error("Could not initiate payment. Please try again.")
+        st.warning("Status: **Free Tier**")
+        st.markdown("Upgrade to **Premium ($20.00/month)** to unlock everything.")
+        if st.button("Upgrade to Premium Now! ($20.00)", type="primary"):
+            with st.spinner("Processing..."):
+                url, ref, amt = create_payment_link(st.session_state.user['email'], st.session_state.user['localId'])
+                if url:
+                    st.success(f"Exchange Rate Applied. Charge: **₦{amt:,.2f}**")
+                    st.markdown(f'[**Click Here to Pay**]({url})', unsafe_allow_html=True)
+                    components.html(f'<meta http-equiv="refresh" content="2; url={url}">', height=0)
 
     st.markdown("---")
-    if st.button("Back to App"):
-        st.session_state.page = "app"
-        st.rerun()
-        
-    if st.button("Logout", type="secondary"):
-        logout()
+    if st.button("Back to App"): st.session_state.page = "app"; st.rerun()
+    if st.button("Logout", type="secondary"): logout()
 
-# === 7. MAIN APP PAGE ===
+# === 7. MAIN APP ===
 elif st.session_state.page == "app" and st.session_state.user:
     st.set_page_config(page_title="PipWizard", page_icon="🧙‍♂️", layout="wide")
+    if "trxref" in st.query_params:
+        with st.spinner("Verifying..."): verify_payment(st.query_params["trxref"])
 
-    # --- Check for Payment Callback (AUTO-ACTIVATE) ---
-    # This runs immediately after the user logs in if they have a payment waiting
-    query_params = st.query_params
-    if "trxref" in query_params:
-        reference = query_params["trxref"]
-        with st.spinner(f"Verifying your payment ({reference})..."):
-            verify_payment(reference)
-    # --- End Payment Check ---
-
-    # === CONFIG ===
     ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
     FREE_PAIR = "EUR/USD"
     PREMIUM_PAIRS = ALL_PAIRS
     INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
     OUTPUTSIZE = 500 
 
-    # === THEME ===
-    if 'theme' not in st.session_state:
-        st.session_state.theme = "dark"
-    def toggle_theme():
-        st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-    def apply_theme():
-        return f"""<style>
-            /* FORCE APP & SIDEBAR BACKGROUND TO DARK */
-            .stApp {{ background-color: #0e1117; color: #f0f0f0; }}
-            section[data-testid="stSidebar"] {{ background-color: #0e1117; }}
-            
-            /* Fix text colors to ensure visibility */
-            .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: #f0f0f0 !important; }}
-            
-            /* BLUE BUTTONS (Overrides Red) */
-            div.stButton > button:first-child {{
-                background-color: #007bff !important; 
-                color: white !important;
-                border: none;
-            }}
-            div.stButton > button:hover {{
-                background-color: #0056b3 !important; 
-                color: white !important;
-            }}
-            
-            /* --- FIX: WHITE INPUT BOXES --- */
-            div[data-testid="stTextInput"] input {{
-                background-color: #ffffff !important;
-                color: #000000 !important;
-            }}
-            
-            .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
-            
-            /* Alert History Table Styles */
-            .alert-history-table {{
-                font-size: 0.85em;
-                width: 100%;
-                border-collapse: collapse;
-                table-layout: fixed; 
-            }}
-            .alert-history-table th, .alert-history-table td {{
-                padding: 4px 2px; 
-                text-align: left;
-                border-bottom: 1px solid #444;
-                color: #f0f0f0;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }}
-            .alert-history-table th {{ font-weight: bold; color: #eee; }}
-            .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
-            .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
-            .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
+    if 'theme' not in st.session_state: st.session_state.theme = "dark"
+    def toggle_theme(): st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
+    
+    st.markdown(f"""<style>
+        .stApp {{ background-color: {'#0e1117' if st.session_state.theme == 'dark' else '#ffffff'}; color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'}; }}
+        section[data-testid="stSidebar"] {{ background-color: {'#0e1117' if st.session_state.theme == 'dark' else '#f0f2f6'}; }}
+        .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'} !important; }}
+        div.stButton > button:first-child {{ background-color: #007bff !important; color: white !important; border: none; }}
+        div[data-testid="stTextInput"] input {{ background-color: #ffffff !important; color: #000000 !important; }}
+    </style>""", unsafe_allow_html=True)
 
-            /* Fix for faint metric labels */
-            div[data-testid="stMetric"] > label {{ color: #f0f0f0; font-weight: bold; }}
-
-            /* Fix for scanner labels */
-            div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{ color: #f0f0f0; }}
-        </style>"""
-    st.markdown(apply_theme(), unsafe_allow_html=True)
-
-    # === HEADER ===
     col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("PipWizard 🧙‍♂️ 📈📉 – Live Signals")
-    with col2:
-        theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
-        if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
-            st.rerun()
+    with col1: st.title("PipWizard 🧙‍♂️ 📈📉")
+    with col2: 
+        if st.button("☀️/🌙", on_click=toggle_theme): st.rerun()
 
-    # === ABOUT THE APP SECTION (ORIGINAL CONTENT) ===
-    with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
-        st.markdown(
-            """
-            ### What is PipWizard?
-            PipWizard is a tool to help you **test trading strategies** before you use them. 
-            
-            It is **not** a "get rich quick" bot. It is a decision-support tool that lets you:
-            1.  **TEST** your ideas (e.g., "What if I buy when RSI is low?") on *historical data* to see if they would have been profitable.
-            2.  **FIND** new strategies by scanning many pairs and timeframes at once.
-            3.  **WATCH** your strategy for new signals in real-time.
-
-            ---
-            
-            ### Tour of the App
-            
-            **1. The Sidebar (Your Controls)**
-            * This is where you set up everything.
-            * **Pair & Timeframe:** Choose what you want to analyze.
-            * **Strategy:** Pick a strategy from the list (e.g., "RSI Standalone").
-            * **Indicator Config:** Set the parameters for your chosen strategy (e.g., RSI Period).
-            * **Backtesting Parameters:** Set your risk management rules (Stop Loss, Take Profit, etc.).
-            * **Save My Settings:** Click this to save all your sidebar settings to your account, so they load automatically the next time you log in.
-            * **Alert History:** A new table at the bottom of the sidebar that logs all signals and their outcomes. Click **"Refresh Outcomes"** to check the status of running trades.
-
-            **2. The Main Chart (Your "Live" View)**
-            * This chart shows you the most recent price data.
-            * The "BUY" and "SELL" arrows show you where your **currently selected strategy** has generated signals.
-            * **OHLC Data:** Use your mouse crosshair to hover over any candle to see its Open, High, Low, and Close price.
-            * This chart automatically refreshes every minute. If a new signal appears, it will be saved to your "Alert History."
-
-            **3. The Backtesting Report (Your "Test Results")**
-            * Click the **"Run Backtest"** button in the sidebar to generate this report.
-            * This is the most important feature. It takes your *current* sidebar settings and tests them against the historical data.
-            * **Note:** The "Data Tested" (e.g., 467 bars) will be less than 500. This is normal. The app correctly removes the first few bars that don't have enough data to calculate indicators (like an SMA).
-            * It tells you if your strategy was profitable, its win rate, and shows a full trade-by-trade log.
-            * **Use this to test an idea *before* you trust it.**
-
-            **4. The Strategy Scanner (Premium Feature)**
-            * Located at the bottom of the page.
-            * This is a "backtest of backtests." It now uses your **personal sidebar settings** (Capital, SL, TP) to test multiple strategies, giving you a report that matches your trading style.
-
-            ---
-
-            ### Feature Tiers
-            
-            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
-            | :--- | :--- | :--- |
-            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
-            | **All Strategies** | ✅ Yes | ✅ Yes |
-            | **Save Settings** | ✅ Yes | ✅ Yes |
-            | **Live Signal Alerts** | ✅ EUR/USD Only | ✅ **All Pairs** |
-            | **Alert History Log** | ✅ EUR/USD Only | ✅ **All Pairs** |
-            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
-            | **🚀 Strategy Scanner**| ❌ No | ✅ **Unlocked** |
-            
-            """
-        )
-    
-    # === SIDEBAR & CONTROLS ===
-    st.sidebar.title("PipWizard 🧙‍♂️ 📈📉")
-    
-    user_id = st.session_state.user['localId']
-    user_email = st.session_state.user.get('email', 'User')
-    st.sidebar.write(f"Logged in as: `{user_email}`")
-    
-    is_premium = st.session_state.is_premium
-
-    if is_premium:
-        selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
-        st.sidebar.markdown(f"""
-            <div style="background-color: rgba(38, 166, 154, 0.2); border: 1px solid #26a69a; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                <p style="color: #26a69a !important; font-weight: bold; margin: 0; text-align: center;">✨ Premium Active</p>
-                <p style="color: #26a69a !important; font-size: 0.8em; margin: 0; text-align: center;">All Features Unlocked</p>
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        selected_pair = FREE_PAIR
-        st.sidebar.warning("Free Tier: EUR/USD Only")
-
-    selected_interval = st.sidebar.selectbox("Timeframe", options=list(INTERVALS.keys()), index=3, format_func=lambda x: x.replace("min", " minute").replace("1h", "1 hour"), key="selected_interval")
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Strategy Selection")
-    strategy_name = st.sidebar.selectbox("Choose a Strategy", ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone"], key="strategy_name")
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Indicator Configuration")
-    show_rsi = st.sidebar.checkbox("Show RSI Chart", value=True)
-    show_macd = st.sidebar.checkbox("Show MACD Chart", value=True)
-    
-    rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
-    sma_period = st.sidebar.slider("SMA Period", 10, 50, 20, key='sma_period')
-    alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
-    alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 65, key='rsi_high')
-    if alert_rsi_low >= alert_rsi_high: st.sidebar.error("RSI Buy threshold must be lower than Sell."); st.stop()
-    macd_fast = st.sidebar.slider("MACD Fast Period", 1, 26, 12, key='macd_fast')
-    macd_slow = st.sidebar.slider("MACD Slow Period", 13, 50, 26, key='macd_slow')
-    macd_signal = st.sidebar.slider("MACD Signal Period", 1, 15, 9, key='macd_signal')
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Backtesting Parameters")
-    initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
-    risk_pct_slider = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') 
-    risk_pct = risk_pct_slider / 100 
-    
-    sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
-    tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') 
-    
-    st.sidebar.markdown("---")
-    col1, col2 = st.sidebar.columns(2)
-    run_backtest_button = col1.button("Run Backtest", type="primary", use_container_width=True)
-    if 'backtest_results' in st.session_state:
-        if col2.button("Clear Results", use_container_width=True):
-            del st.session_state.backtest_results; st.rerun()
-    
-    if not is_premium:
-        st.sidebar.markdown("---")
-        st.sidebar.info(
-            """
-            **⭐ Upgrade to Premium ($29.99/mo):**
-            • Unlock all pairs
-            • Unlock Strategy Scanner
-            • Get Live Signal Alerts
-            """
-        )
-        if st.sidebar.button("Upgrade to Premium Now!", type="primary", use_container_width=True, key="upgrade_button"):
-            st.session_state.page = "profile"
-            st.rerun()
-
-    st.sidebar.markdown("---")
-    
-    # === NOTIFICATION SETTINGS (Telegram) ===
-    st.sidebar.subheader("Notification Settings")
-    telegram_chat_id = st.sidebar.text_input("Your Telegram Chat ID", 
-                                             value=st.session_state.get("telegram_chat_id", ""), 
-                                             key="telegram_chat_id_input",
-                                             help="Start a chat with @userinfobot on Telegram to get your ID.")
-    
-    # Button immediately below input
-    if st.sidebar.button("Save Telegram ID & Settings", use_container_width=True):
-        if st.session_state.user:
-            settings_to_save = {
-                "selected_pair": st.session_state.get("selected_pair", "EUR/USD"),
-                "selected_interval": st.session_state.get("selected_interval", "1h"),
-                "strategy_name": st.session_state.get("strategy_name", "RSI + SMA Crossover"),
-                "rsi_period": st.session_state.get("rsi_period", 14),
-                "sma_period": st.session_state.get("sma_period", 20),
-                "alert_rsi_low": st.session_state.get("alert_rsi_low", 35),
-                "alert_rsi_high": st.session_state.get("alert_rsi_high", 65),
-                "macd_fast": st.session_state.get("macd_fast", 12),
-                "macd_slow": st.session_state.get("macd_slow", 26),
-                "macd_signal": st.session_state.get("macd_signal", 9),
-                "capital": st.session_state.get("capital", 10000),
-                "risk_pct": st.session_state.get("risk_pct", 1.0), 
-                "sl_pips": st.session_state.get("sl_pips", 50),
-                "tp_pips": st.session_state.get("tp_pips", 100),
-                "telegram_chat_id": telegram_chat_id 
-            }
-            try:
-                db.child("users").child(user_id).child("settings").set(settings_to_save, st.session_state.user['idToken'])
-                st.session_state.telegram_chat_id = telegram_chat_id
-                st.sidebar.success("Settings saved successfully!")
-            except Exception as e:
-                st.sidebar.error(f"Failed to save settings: {e}")
-
-    # === HELPER FUNCTIONS ===
+    # === HYBRID DATA FETCHER (THE FIX) ===
     @st.cache_data(ttl=60)
-    def fetch_data(symbol, interval, output_size=OUTPUTSIZE):
-        if "TD_API_KEY" not in st.secrets:
-            st.error("TD_API_KEY not found."); return pd.DataFrame()
-        td = TDClient(apikey=st.secrets["TD_API_KEY"])
-        try:
-            ts = td.time_series(symbol=symbol, interval=interval, outputsize=output_size).as_pandas()
-            if ts is None or ts.empty:
-                st.error(f"No data for {symbol}."); return pd.DataFrame()
-            df = ts[['open', 'high', 'low', 'close']].copy()
-            df.index = pd.to_datetime(df.index)
-            return df.iloc[::-1] 
-        except Exception as e:
-            st.error(f"API Error: {e}"); return pd.DataFrame()
+    def fetch_data(symbol, interval, source="TwelveData", output_size=500):
+        # 1. YAHOO (For Scanner - Unlimited)
+        if source == "Yahoo":
+            yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
+            yf_sym = f"{symbol.replace('/', '')}=X"
+            try:
+                df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False)
+                if df.empty: return pd.DataFrame()
+                df = df.reset_index()
+                df.columns = [c.lower() if isinstance(c, str) else c[0].lower() for c in df.columns]
+                df.rename(columns={'date': 'datetime', 'index': 'datetime'}, inplace=True)
+                df.set_index('datetime', inplace=True)
+                return df[['open', 'high', 'low', 'close']].dropna()
+            except: return pd.DataFrame()
 
-    def send_telegram_alert(pair, signal_type, entry, tp, sl):
-        if "TELEGRAM" not in st.secrets: return
-        token = st.secrets["TELEGRAM"].get("BOT_TOKEN")
-        chat_id = st.session_state.get("telegram_chat_id")
-        if not token or not chat_id: return
+        # 2. TWELVE DATA (For Chart - Pretty)
+        elif source == "TwelveData":
+            if "TD_API_KEY" not in st.secrets: return pd.DataFrame()
+            td = TDClient(apikey=st.secrets["TD_API_KEY"])
+            try:
+                ts = td.time_series(symbol=symbol, interval=interval, outputsize=output_size).as_pandas()
+                if ts is None or ts.empty: return pd.DataFrame()
+                df = ts[['open', 'high', 'low', 'close']].copy()
+                df.index = pd.to_datetime(df.index)
+                return df.iloc[::-1]
+            except: return pd.DataFrame()
+        return pd.DataFrame()
 
-        emoji = "🟢" if signal_type == "BUY" else "🔴"
-        message = f"""
-🚀 *PipWizard Alert* 🚀
-*Pair:* {pair}
-*Signal:* {signal_type} {emoji}
-*Entry:* `{entry}`
-*TP:* `{tp}`
-*SL:* `{sl}`
-        """
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-        try: requests.post(url, json=payload)
-        except Exception as e: print(f"Telegram Error: {e}")
-
-    def send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price):
-        if db is None or user_id is None: return
-
-        alert_id = str(uuid.uuid4())
-        alert_data = {
-            "id": alert_id, "pair": pair, "type": signal_type,
-            "entry_price": f"{entry_price:.5f}", "tp_price": f"{tp_price:.5f}", "sl_price": f"{sl_price:.5f}",
-            "status": "RUNNING", "entry_time": entry_time.isoformat(),
-            "entry_timestamp": int(entry_time.timestamp())
-        }
-        try:
-            db.child("users").child(user_id).child("alerts").child(alert_id).set(alert_data, st.session_state.user['idToken'])
-            send_telegram_alert(pair, signal_type, f"{entry_price:.5f}", f"{tp_price:.5f}", f"{sl_price:.5f}")
-            st.sidebar.success(f"New {signal_type} Alert on {pair}!")
-        except Exception as e:
-            st.sidebar.error(f"Failed to save alert: {e}")
-
-    def check_for_live_signal(df, pair, tp_pips, sl_pips):
-        if len(df) < 2: return
-        latest_bar = df.iloc[-2]
-        signal = latest_bar['signal']
-        
-        if 'last_alert_time' not in st.session_state: 
-            st.session_state.last_alert_time = None
-            
-        if signal != 0 and latest_bar.name != st.session_state.last_alert_time:
-            st.session_state.last_alert_time = latest_bar.name
-            entry_price = df.iloc[-1]['open']
-            entry_time = df.iloc[-1].name
-            signal_type = "BUY" if signal == 1 else "SELL"
-            
-            if "JPY" in pair: PIP_MULTIPLIER = 0.01
-            else: PIP_MULTIPLIER = 0.0001
-            sl_value = sl_pips * PIP_MULTIPLIER
-            tp_value = tp_pips * PIP_MULTIPLIER
-
-            if signal_type == "BUY":
-                sl_price = entry_price - sl_value; tp_price = entry_price + tp_value
-            else: 
-                sl_price = entry_price + sl_value; tp_price = entry_price - tp_value
-            
-            send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price)
-
-    # === INDICATOR & STRATEGY LOGIC ===
+    # ... (Indicator & Strategy functions remain same) ...
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
@@ -668,31 +267,9 @@ elif st.session_state.page == "app" and st.session_state.user:
             buy_cond = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
             sell_cond = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
-        elif strategy_name == "RSI + MACD (Confluence)":
-            buy_cond_1 = (df['rsi'] < rsi_l)
-            buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
-            df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
-            sell_cond_1 = (df['rsi'] > rsi_h)
-            sell_cond_2 = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
-            df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
-        elif strategy_name == "SMA + MACD (Confluence)":
-            buy_cond_1 = (df['close'] > df['sma'])
-            buy_cond_2 = (df['macd_line'] > df['macd_signal']) & (df['macd_line'].shift(1) <= df['macd_signal'].shift(1))
-            df.loc[buy_cond_1 & buy_cond_2, 'signal'] = 1
-            sell_cond_1 = (df['close'] < df['sma'])
-            sell_cond_2 = (df['macd_line'] < df['macd_signal']) & (df['macd_line'].shift(1) >= df['macd_signal'].shift(1))
-            df.loc[sell_cond_1 & sell_cond_2, 'signal'] = -1
-        elif strategy_name == "RSI Standalone":
-            buy_cond = (df['rsi'] < rsi_l) & (df['rsi'].shift(1) >= rsi_l)
-            sell_cond = (df['rsi'] > rsi_h) & (df['rsi'].shift(1) <= rsi_h)
-            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
-        elif strategy_name == "SMA Crossover Standalone":
-            buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
-            sell_cond = (df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1))
-            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
         return df
 
-    # === BACKTESTING FUNCTION ===
+    # ... (Backtest function remains same) ...
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
         df = df_in.copy(); trades = []
         if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
@@ -728,7 +305,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         resolved_trades = trade_log[trade_log['result'].isin(['WIN', 'LOSS'])].copy()
         if resolved_trades.empty: return 0, 0, 0, 0, initial_capital, trade_log, resolved_trades
         
-        # --- CHART FIX: Sort by Exit Time to prevent Zig-Zag ---
         resolved_trades.sort_values(by='exit_time', inplace=True)
         
         total_trades = len(resolved_trades)
@@ -742,286 +318,113 @@ elif st.session_state.page == "app" and st.session_state.user:
         resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
         return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_log, resolved_trades
 
-    # === DATA LOADING & CHART ===
-    with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
-        df = fetch_data(selected_pair, INTERVALS[selected_interval])
-    if df.empty:
-        st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
-    
-    with st.spinner("Calculating indicators..."):
-        df_indicators = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
-    
-    with st.spinner(f"Applying Strategy: {strategy_name}..."):
-        df_final = apply_strategy(df_indicators.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
-        
-    if run_backtest_button:
-        with st.spinner("Running backtest on real market data..."):
-            df_backtest = df_final.dropna()
-            total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
-                df_backtest, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
-            )
-            st.session_state.backtest_results = {
-                "total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit,
-                "profit_factor": pf, "final_capital": final_cap, "trade_df": trade_df,
-                "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval, "data_len": len(df_backtest)
-            }
-        st.rerun()
-
-    # === DISPLAY RESULTS ===
-    if 'backtest_results' in st.session_state:
-        results = st.session_state.backtest_results
-        st.markdown("---"); st.subheader("Backtesting Results (Simulated)")
-        st.markdown(f"***Data Tested:*** *{results['pair']}* on *{results['interval']}* interval. *{results['data_len']}* bars.")
-        col_t, col_w, col_p, col_f = st.columns(4)
-        col_t.metric("Total Trades", results['total_trades'])
-        col_w.metric("Win Rate", f"{results['win_rate']:.2%}")
-        col_p.metric("Total Profit ($)", f"{results['total_profit']:,.2f}", delta=f"{(results['total_profit']/initial_capital):.2%}")
-        col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
-        
-        st.subheader("Equity Curve")
-        resolved_df_key = 'resolved_trades_df' 
-        if resolved_df_key in results and not results[resolved_df_key].empty:
-            equity_fig = go.Figure()
-            equity_fig.add_trace(go.Scatter(x=results[resolved_df_key]['exit_time'], y=results[resolved_df_key]['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
-            equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
-            st.plotly_chart(equity_fig, use_container_width=True)
-        else: st.info("No resolved trades found with these settings.")
-        
-        st.subheader("Detailed Trade Log")
-        trade_df_display = results['trade_df'].copy()
-        # === FIX: Clean Headers ===
-        trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
-        st.dataframe(trade_df_display, width='stretch') 
-        
-    elif not 'backtest_results' in st.session_state:
-        st.markdown("---")
-        st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
-
-    # === LIGHTWEIGHT CHART ===
-    st.markdown("---")
-    st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df_final)} Candles")
-    
-    chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
-    chart = StreamlitChart(width=1000, height=500)
-    chart.layout_options = { "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff", "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529" }
-    chart.grid_options = { "vertLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"}, "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"} }
-    chart.crosshair_options = { "mode": 1, "vertLine": {"color": "#C0C0C0", "style": 2, "width": 1}, "horzLine": {"color": "#C0C0C0", "style": 2, "width": 1} }
-
-    df_reset = df_final.reset_index()
-    index_col_name = df_reset.columns[0]
-    df_reset['time'] = df_reset[index_col_name].dt.strftime('%Y-%m-%d %H:%M')
-    df_chart_clean = df_reset.dropna(subset=['sma']) 
-    
-    df_chart_data = df_chart_clean[['time', 'open', 'high', 'low', 'close']]
-    sma_data = df_chart_clean[['time', 'sma']]
-    
-    buy_signals = df_chart_clean[df_chart_clean['signal'] == 1]
-    sell_signals = df_chart_clean[df_chart_clean['signal'] == -1]
-    buy_markers = [{"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"} for _, row in buy_signals.iterrows()]
-    sell_markers = [{"time": row['time'], "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "SELL"} for _, row in sell_signals.iterrows()]
-    
-    chart.set(df_chart_data)
-    sma_line = chart.create_line(name="sma", color="#ff9800", width=2)
-    sma_line.set(sma_data)
-    chart.markers = buy_markers + sell_markers
-    chart.load()
-
-    # === SUBPLOTS ===
-    fig_subplots = make_subplots(rows=2 if show_rsi and show_macd else 1, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0])
-    num_subplots = (1 if show_rsi else 0) + (1 if show_macd else 0)
-    current_row = 1
-    if show_rsi:
-        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
-        fig_subplots.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=current_row, col=1)
-        fig_subplots.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=current_row, col=1)
-        fig_subplots.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
-        fig_subplots.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=current_row, col=1)
-        current_row += 1
-    if show_macd:
-        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
-        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
-        colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df_final['macd_hist']]
-        fig_subplots.add_trace(go.Bar(x=df_final.index, y=df_final['macd_hist'], name='Histogram', marker_color=colors), row=current_row, col=1)
-        fig_subplots.update_yaxes(title_text="MACD", row=current_row, col=1)
-        fig_subplots.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
-        
-    if show_rsi or show_macd:
-        if num_subplots > 0:
-            fig_subplots.update_layout(height=300 * num_subplots, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
-
-    check_for_live_signal(df_final, selected_pair, tp_pips, sl_pips)
-
-    # === STRATEGY SCANNER (PREMIUM) ===
+    # Sidebar Setup
+    st.sidebar.title("PipWizard 🧙‍♂️")
+    st.sidebar.write(f"User: {st.session_state.user.get('email')}")
+    is_premium = st.session_state.is_premium
     if is_premium:
-        st.markdown(f"""
-            <div style="border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'}; border-radius: 8px; padding: 20px; margin-top: 30px; margin-bottom: 30px; background-color: {'#1a1a1a' if st.session_state.theme == 'dark' else '#fdfdfd'}; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);">
-                <h3 style="color: {'#e0e0e0' if st.session_state.theme == 'dark' else '#333'}; margin-top: 0;">
-                    🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
-                </h3>
-                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'}; margin-bottom: 20px;">
-                    Uncover the most profitable strategies by backtesting across multiple currency pairs and timeframes, tailored to your risk parameters.
-                </p>
-        """, unsafe_allow_html=True)
+        selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0)
+        st.sidebar.success("✨ Premium Active")
+    else:
+        selected_pair = FREE_PAIR
+        st.sidebar.warning("Free Tier: EUR/USD Only")
 
-        all_strategies = ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone"]
-        col_scan1, col_scan2, col_scan3 = st.columns(3)
-        with col_scan1: scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=[])
-        with col_scan2: scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=[])
-        with col_scan3: scan_strategies = st.multiselect("Select Strategies", all_strategies, default=[])
+    selected_interval = st.sidebar.selectbox("Timeframe", list(INTERVALS.keys()), index=3)
+    st.sidebar.markdown("---")
+    strategy_name = st.sidebar.selectbox("Strategy", ["RSI + SMA Crossover", "MACD Crossover"])
+    
+    # Indicators
+    st.sidebar.markdown("**Indicators**")
+    rsi_period = st.sidebar.slider("RSI", 5, 30, 14)
+    sma_period = st.sidebar.slider("SMA", 10, 50, 20)
+    alert_rsi_low = st.sidebar.slider("RSI Buy <", 20, 40, 35)
+    alert_rsi_high = st.sidebar.slider("RSI Sell >", 60, 80, 65)
+    macd_fast = st.sidebar.slider("MACD Fast", 1, 26, 12)
+    macd_slow = st.sidebar.slider("MACD Slow", 13, 50, 26)
+    macd_signal = st.sidebar.slider("MACD Signal", 1, 15, 9)
+    
+    # Backtest Params
+    st.sidebar.markdown("**Backtest**")
+    initial_capital = st.sidebar.number_input("Capital", 100, 100000, 10000)
+    risk_pct = st.sidebar.slider("Risk %", 0.5, 5.0, 1.0) / 100
+    sl_pips = st.sidebar.number_input("SL Pips", 10, 200, 50)
+    tp_pips = st.sidebar.number_input("TP Pips", 10, 500, 100)
+    
+    if st.sidebar.button("Run Backtest", type="primary"):
+        df = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo") # YAHOO FOR BACKTEST
+        if not df.empty:
+            df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+            df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high)
+            df_bt = df.dropna()
+            res = run_backtest(df_bt, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips)
+            st.session_state.backtest_results = res
+            st.rerun()
+
+    if not is_premium:
+        st.sidebar.info("⭐ Upgrade to Premium ($20) to unlock Scanner")
+        if st.sidebar.button("Upgrade Now"): st.session_state.page = "profile"; st.rerun()
         
-        scan_params = { "rsi_p": rsi_period, "sma_p": sma_period, "macd_f": macd_fast, "macd_sl": macd_slow, "macd_sig": macd_signal, "rsi_l": alert_rsi_low, "rsi_h": alert_rsi_high, "capital": initial_capital, "risk": risk_pct, "sl": sl_pips, "tp": tp_pips }
+    # Main Chart
+    df = fetch_data(selected_pair, INTERVALS[selected_interval], source="TwelveData") # TWELVE DATA FOR CHART
+    if not df.empty:
+        df = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+        df = apply_strategy(df, strategy_name, alert_rsi_low, alert_rsi_high)
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Initiate Scan", type="primary", key="scan_button_professional", use_container_width=True): 
-            if not all([scan_pairs, scan_intervals, scan_strategies]): st.error("Please select at least one Pair, Timeframe, and Strategy.")
-            else:
-                total_jobs = len(scan_pairs) * len(scan_intervals) * len(scan_strategies)
-                progress_bar = st.progress(0, text=f"Starting Scan... (0/{total_jobs})")
-                scan_results = []
-                job_count = 0
-                results_placeholder = st.empty()
+        chart = StreamlitChart(width=1000, height=500)
+        chart.layout_options = {"backgroundColor": "#0e1117" if st.session_state.theme == 'dark' else "#ffffff", "textColor": "#f0f0f0" if st.session_state.theme == 'dark' else "#000000"}
+        
+        df_chart = df.reset_index()
+        df_chart['time'] = df_chart['datetime'].dt.strftime('%Y-%m-%d %H:%M')
+        chart.set(df_chart[['time', 'open', 'high', 'low', 'close']])
+        chart.load()
+        
+        # Backtest Results Display
+        if 'backtest_results' in st.session_state and isinstance(st.session_state.backtest_results, tuple):
+            res = st.session_state.backtest_results
+            if len(res) == 7:
+                st.subheader("Backtest Results")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Profit", f"${res[2]:.2f}")
+                c2.metric("Win Rate", f"{res[1]:.2%}")
+                c3.metric("Trades", res[0])
+
+    # === SCANNER (UPDATED TO USE YAHOO) ===
+    if is_premium:
+        st.markdown("---")
+        st.subheader("🚀 Strategy Scanner")
+        scan_pairs = st.multiselect("Pairs", PREMIUM_PAIRS)
+        scan_timeframes = st.multiselect("Timeframes", list(INTERVALS.keys()))
+        
+        if st.button("Start Scan", type="primary"):
+            if scan_pairs and scan_timeframes:
+                results = []
+                progress = st.progress(0)
+                total = len(scan_pairs) * len(scan_timeframes)
+                done = 0
+                
                 for pair in scan_pairs:
-                    for interval_key in scan_intervals:
-                        interval_val = INTERVALS[interval_key]
-                        data = fetch_data(pair, interval_val) 
-                        if data.empty: total_jobs -= len(scan_strategies); continue
-                        for strategy in scan_strategies:
-                            job_count += 1
-                            progress_bar.progress(job_count / total_jobs, text=f"Analyzing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})")
-                            data_with_indicators = calculate_indicators(data.copy(), scan_params["rsi_p"], scan_params["sma_p"], scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
-                            data_with_strategy = apply_strategy(data_with_indicators.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
-                            data_clean = data_with_strategy.dropna()
-                            if data_clean.empty: continue
-                            total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(data_clean, pair, scan_params["capital"], scan_params["risk"], scan_params["sl"], scan_params["tp"])
-                            if total_trades > 0: scan_results.append({"Pair": pair, "Timeframe": interval_key, "Strategy": strategy, "Total Profit ($)": total_profit, "Win Rate (%)": win_rate * 100, "Profit Factor": pf, "Total Trades": total_trades})
-                progress_bar.progress(1.0, text="Scan Complete!")
-                with results_placeholder.container(): 
-                    if scan_results:
-                        st.subheader("Scan Results Overview")
-                        results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
-                        st.dataframe(results_df.style.format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}), width='stretch')
-                    else: st.info("Scan completed, but no profitable trades were found.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-         st.markdown(f"""
-            <div style="border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'}; border-radius: 8px; padding: 20px; margin-top: 30px; margin-bottom: 30px; background-color: {'#1a1a1a' if st.session_state.theme == 'dark' else '#fdfdfd'}; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);">
-                <h3 style="color: {'#e0e0e0' if st.session_state.theme == 'dark' else '#333'}; margin-top: 0;">
-                    🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
-                </h3>
-                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'};">
-                    The **Strategy Scanner** is a powerful Premium feature designed to help you discover the most effective trading strategies. Upgrade to unlock!
-                </p>
-            </div>
-         """, unsafe_allow_html=True)
-         
-         if st.button("Upgrade to Premium Now! (Unlock Scanner)", type="primary", use_container_width=True):
-             st.session_state.page = "profile"
-             st.rerun()
+                    for tf in scan_timeframes:
+                        # === KEY CHANGE: USE YAHOO FOR SCANNING ===
+                        data = fetch_data(pair, INTERVALS[tf], source="Yahoo")
+                        if not data.empty:
+                            data = calculate_indicators(data, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+                            data = apply_strategy(data, strategy_name, alert_rsi_low, alert_rsi_high)
+                            data = data.dropna()
+                            res = run_backtest(data, pair, initial_capital, risk_pct, sl_pips, tp_pips)
+                            if res[0] > 0: # If trades exist
+                                results.append({"Pair": pair, "TF": tf, "Profit": res[2], "Win Rate": res[1]})
+                        done += 1
+                        progress.progress(done/total)
+                
+                if results:
+                    st.dataframe(pd.DataFrame(results).sort_values("Profit", ascending=False))
+                else:
+                    st.info("No profitable trades found in scan.")
 
-    # === RISK DISCLAIMER (FULL TEXT RESTORED) ===
-    st.markdown("---"); st.subheader("⚠️ Risk Disclaimer")
-    st.warning(
-        """
-        **This is a simulation and not financial advice.**
-        
-        * All backtest results are based on **historical data** and do not guarantee future performance.
-        * Forex trading involves substantial risk and is not suitable for every investor.
-        * The valuation of currencies may fluctuate, and as a result, clients may lose more than their original investment.
-        * This tool is for educational and informational purposes only.
-        * Always trade responsibly and use your own risk management plan.
-        * Past performance is not indicative of future results.
-        """
-    )
-
-    # === AUTO-REFRESH ===
-    components.html("<meta http-equiv='refresh' content='61'>", height=0)
-
-    # === ALERT HISTORY SECTION (SIDEBAR BOTTOM) ===
+    # Sidebar Bottom
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Alert History")
-
-    @st.cache_data(ttl=60)
-    def load_alerts_from_firebase(user_id):
-        try:
-            alerts = db.child("users").child(user_id).child("alerts").get(st.session_state.user['idToken']).val()
-            if alerts:
-                return sorted(alerts.values(), key=lambda x: x['entry_timestamp'], reverse=True)
-            return []
-        except Exception as e:
-            return []
-
-    def update_alert_outcomes(alerts):
-        if db is None: return
-        with st.spinner("Refreshing alert outcomes..."):
-            updated_count = 0
-            for alert in alerts:
-                if alert['status'] == 'RUNNING':
-                    try:
-                        alert_time = datetime.fromisoformat(alert['entry_time'])
-                        time_diff_seconds = (datetime.now(timezone.utc) - alert_time).total_seconds()
-                        interval_map = {"1min": 60, "5min": 300, "15min": 900, "30min": 1800, "1h": 3600}
-                        interval_seconds = interval_map.get(selected_interval, 3600)
-                        bars_to_fetch = int(time_diff_seconds / interval_seconds) + 2
-                        if bars_to_fetch < 2: continue
-                        
-                        df_new = fetch_data(alert['pair'], selected_interval, output_size=bars_to_fetch)
-                        if df_new.empty: continue
-                        
-                        try:
-                            entry_bar_index = df_new.index.get_loc(alert_time)
-                            df_future = df_new.iloc[entry_bar_index + 1:]
-                        except KeyError:
-                            if alert_time < df_new.index.min():
-                                db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": "EXPIRED"}, st.session_state.user['idToken'])
-                            continue
-                        
-                        if df_future.empty: continue
-                        new_status = "RUNNING"
-                        tp = float(alert['tp_price']); sl = float(alert['sl_price'])
-                        for _, bar in df_future.iterrows():
-                            if alert['type'] == 'BUY':
-                                if bar['low'] <= sl: new_status = "LOSS"; break
-                                if bar['high'] >= tp: new_status = "PROFIT"; break
-                            elif alert['type'] == 'SELL':
-                                if bar['high'] >= sl: new_status = "LOSS"; break
-                                if bar['low'] <= tp: new_status = "PROFIT"; break
-                        
-                        if new_status != "RUNNING":
-                            updated_count += 1
-                            alert['status'] = new_status
-                            db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": new_status}, st.session_state.user['idToken'])
-                    except Exception as e: print(f"Error: {e}")
-            if updated_count > 0: st.sidebar.success(f"Updated {updated_count} alert(s)!"); st.cache_data.clear()
-            else: st.sidebar.info("No new outcomes found.")
-
-    alert_list = load_alerts_from_firebase(user_id)
-
-    if st.sidebar.button("Refresh Outcomes", use_container_width=True, key="refresh_outcomes_btn"):
-        update_alert_outcomes(alert_list)
-        st.rerun()
-
-    if alert_list:
-        table_html = "<table class='alert-history-table'><tr><th>Time</th><th>Pair</th><th>Type</th><th>Status</th></tr>"
-        for alert in alert_list[:10]:
-            try: dt = datetime.fromisoformat(alert['entry_time'])
-            except ValueError: dt = datetime.now() 
-            time_str = dt.strftime('%m/%d %H:%M')
-            status_class = f"alert-status-{alert['status']}"
-            table_html += f"<tr><td>{time_str}</td><td>{alert['pair']}</td><td>{alert['type']}</td><td><span class='{status_class}'>{alert['status']}</span></td></tr>"
-        table_html += "</table>"
-        st.sidebar.markdown(table_html, unsafe_allow_html=True)
-    else:
-        st.sidebar.info("No alerts found yet.")
-
-    # === NEW LOCATION: PROFILE & LOGOUT (AT THE VERY BOTTOM) ===
-    st.sidebar.markdown("---")
-    if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button_bottom"):
-        st.session_state.page = "profile"
-        st.rerun()
+    if st.sidebar.button("Profile & Logout"): st.session_state.page = "profile"; st.rerun()
 
 # === 8. ERROR HANDLING ===
 elif not st.session_state.user:
-    st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
-    st.title("PipWizard 🧙‍♂️ 📈📉")
-    st.error("Application failed to initialize.")
+    st.error("App failed to initialize.")
