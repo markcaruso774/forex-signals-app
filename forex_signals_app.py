@@ -12,6 +12,7 @@ import json      # For Firebase
 import requests  # For Paystack & Telegram
 import uuid      # For unique alert IDs
 import yfinance as yf # For Unlimited Free Scanning
+import xml.etree.ElementTree as ET # For Economic Calendar Parsing
 
 # --- NEW LIBRARY ---
 from lightweight_charts.widgets import StreamlitChart
@@ -392,12 +393,10 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
-        # 1. YAHOO (For Scanner/Backtest - Unlimited)
         if source == "Yahoo":
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
             yf_sym = f"{symbol.replace('/', '')}=X"
             try:
-                # FIX: auto_adjust=False to silence warning
                 df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False, auto_adjust=False)
                 if df.empty: return pd.DataFrame()
                 df = df.reset_index()
@@ -408,7 +407,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 return df[['open', 'high', 'low', 'close']].dropna()
             except: return pd.DataFrame()
 
-        # 2. TWELVE DATA (For Main Chart - Pretty)
         elif source == "TwelveData":
             if "TD_API_KEY" not in st.secrets: return pd.DataFrame()
             td = TDClient(apikey=st.secrets["TD_API_KEY"])
@@ -663,29 +661,87 @@ elif st.session_state.page == "app" and st.session_state.user:
     chart.markers = buy_markers + sell_markers
     chart.load()
 
-    # === ECONOMIC CALENDAR (NEW) ===
+    # === NEW: NATIVE ECONOMIC CALENDAR ===
     st.markdown("---")
-    def show_economic_calendar():
-        st.subheader("📅 Economic Calendar")
+    st.subheader("📅 Economic Calendar (This Week)")
+    
+    # Backup Function: TradingView Widget
+    def show_backup_widget():
         calendar_html = """
         <div class="tradingview-widget-container">
           <div class="tradingview-widget-container__widget"></div>
           <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
-          {
-          "width": "100%",
-          "height": "500",
-          "colorTheme": "dark",
-          "isTransparent": true,
-          "locale": "en",
-          "importanceFilter": "-1,0,1",
-          "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD"
-        }
+          { "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }
           </script>
         </div>
         """
         components.html(calendar_html, height=520, scrolling=True)
+
+    # Main Function: Fetch Raw Data
+    @st.cache_data(ttl=3600) # Cache for 1 hour
+    def get_native_calendar():
+        try:
+            # Fetch XML from ForexFactory (Public Feed)
+            url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+            # User-Agent is critical to avoid 403 Forbidden
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            if response.status_code != 200: return None
+            
+            root = ET.fromstring(response.content)
+            data = []
+            for event in root.findall('event'):
+                country = event.find('country').text
+                if country not in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]: continue # Filter Majors
+                
+                data.append({
+                    "Currency": country,
+                    "Event": event.find('title').text,
+                    "Impact": event.find('impact').text,
+                    "Date": event.find('date').text,
+                    "Time": event.find('time').text,
+                    "Forecast": event.find('forecast').text if event.find('forecast') is not None else "",
+                    "Previous": event.find('previous').text if event.find('previous') is not None else "",
+                    "Actual": "**" + event.find('actual').text + "**" if event.find('actual') is not None and event.find('actual').text else "" # Bold the actual
+                })
+            
+            if not data: return None
+            
+            df = pd.DataFrame(data)
+            # Sort logic if needed, but XML is usually sorted
+            return df
+            
+        except Exception as e:
+            # print(f"Calendar Error: {e}") # Debugging
+            return None
+
+    # Render the Calendar
+    df_cal = get_native_calendar()
     
-    show_economic_calendar()
+    if df_cal is not None and not df_cal.empty:
+        # Style the dataframe
+        st.dataframe(
+            df_cal,
+            column_config={
+                "Impact": st.column_config.TextColumn(
+                    "Impact",
+                    help="High (Red), Medium (Orange), Low (Yellow)",
+                ),
+                "Actual": st.column_config.TextColumn(
+                    "Actual",
+                    help="Actual released figure",
+                ),
+            },
+            hide_index=True,
+            width=1000 # stretch to fit container
+        )
+        if st.button("Refresh Calendar"):
+            st.cache_data.clear()
+            st.rerun()
+    else:
+        # Fallback to Widget if Native fails
+        show_backup_widget()
 
     # === SUBPLOTS ===
     fig_subplots = make_subplots(rows=2 if show_rsi and show_macd else 1, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0])
