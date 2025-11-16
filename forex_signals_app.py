@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, timezone 
 import streamlit.components.v1 as components
 import talib
 from twelvedata import TDClient
@@ -13,9 +10,6 @@ import requests  # For Paystack & Telegram
 import uuid      # For unique alert IDs
 import yfinance as yf # For Unlimited Free Scanning
 import xml.etree.ElementTree as ET # For Economic Calendar Parsing
-
-# --- NEW LIBRARY ---
-from lightweight_charts.widgets import StreamlitChart
 
 # === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
@@ -315,8 +309,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Indicator Configuration")
-    show_rsi = st.sidebar.checkbox("Show RSI Chart", value=True)
-    show_macd = st.sidebar.checkbox("Show MACD Chart", value=True)
+    # Note: We remove the "Show RSI/MACD" checkboxes because the TradingView widget has them built-in.
+    # But we keep the *settings* because they are still used for the Backtester and Scanner.
     
     rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
     sma_period = st.sidebar.slider("SMA Period", 10, 50, 20, key='sma_period')
@@ -393,6 +387,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
+        # NOTE: "TwelveData" source is now technically unused for the main chart, 
+        # but we keep it safe in case you want to revert or use it for calculations later.
         if source == "Yahoo":
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
             yf_sym = f"{symbol.replace('/', '')}=X"
@@ -405,17 +401,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 df.set_index('datetime', inplace=True)
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 return df[['open', 'high', 'low', 'close']].dropna()
-            except: return pd.DataFrame()
-
-        elif source == "TwelveData":
-            if "TD_API_KEY" not in st.secrets: return pd.DataFrame()
-            td = TDClient(apikey=st.secrets["TD_API_KEY"])
-            try:
-                ts = td.time_series(symbol=symbol, interval=interval, outputsize=output_size).as_pandas()
-                if ts is None or ts.empty: return pd.DataFrame()
-                df = ts[['open', 'high', 'low', 'close']].copy()
-                df.index = pd.to_datetime(df.index)
-                return df.iloc[::-1]
             except: return pd.DataFrame()
         return pd.DataFrame()
 
@@ -569,18 +554,58 @@ elif st.session_state.page == "app" and st.session_state.user:
         resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
         return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_log, resolved_trades
 
-    # === DATA LOADING & CHART ===
-    with st.spinner(f"Fetching {OUTPUTSIZE} candles for {selected_pair} ({selected_interval})..."):
-        df = fetch_data(selected_pair, INTERVALS[selected_interval], source="TwelveData") # TWELVE DATA FOR CHART
-    if df.empty:
-        st.error("Failed to load data. The API might be down or your key is invalid."); st.stop()
+    # === MAIN CHART (TRADINGVIEW WIDGET) ===
+    st.markdown("---")
+    st.subheader(f"**{selected_pair}** – **{selected_interval}**")
     
-    with st.spinner("Calculating indicators..."):
-        df_indicators = calculate_indicators(df, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
-    
-    with st.spinner(f"Applying Strategy: {strategy_name}..."):
-        df_final = apply_strategy(df_indicators.copy(), strategy_name, alert_rsi_low, alert_rsi_high)
+    def show_advanced_chart(symbol):
+        # Map format "EUR/USD" -> "FX:EURUSD" for TradingView
+        tv_symbol = f"FX:{symbol.replace('/', '')}"
         
+        # Advanced Real-Time Chart Widget with RSI and MACD
+        html_code = f"""
+        <div class="tradingview-widget-container">
+          <div id="tradingview_advanced_chart"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+          <script type="text/javascript">
+          new TradingView.widget(
+          {{
+            "width": "100%",
+            "height": 600,
+            "symbol": "{tv_symbol}",
+            "interval": "60",
+            "timezone": "Etc/UTC",
+            "theme": "dark",
+            "style": "1",
+            "locale": "en",
+            "enable_publishing": false,
+            "allow_symbol_change": true,
+            "studies": [
+              "RSI@tv-basicstudies",
+              "MACD@tv-basicstudies"
+            ],
+            "container_id": "tradingview_advanced_chart"
+          }}
+          );
+          </script>
+        </div>
+        """
+        components.html(html_code, height=620)
+
+    # Display the Advanced Widget
+    show_advanced_chart(selected_pair)
+    
+    # We still need to fetch data internally to check for signals (Alert System)
+    # But we don't show the static charts anymore.
+    # This "invisible" fetch keeps your "Live Alerts" working in the background.
+    with st.spinner(f"Analyzing market data for alerts..."):
+         df_analysis = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
+         if not df_analysis.empty:
+             df_ind = calculate_indicators(df_analysis, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+             df_final = apply_strategy(df_ind, strategy_name, alert_rsi_low, alert_rsi_high)
+             check_for_live_signal(df_final, selected_pair, tp_pips, sl_pips)
+
+    # === BACKTEST SECTION ===
     if run_backtest_button:
         with st.spinner("Running backtest on real market data..."):
             # USE YAHOO FOR BACKTEST (UNLIMITED)
@@ -631,35 +656,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     elif not 'backtest_results' in st.session_state:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
-
-    # === LIGHTWEIGHT CHART ===
-    st.markdown("---")
-    st.subheader(f"**{selected_pair}** – **{selected_interval}** – Last {len(df_final)} Candles")
-    
-    chart_theme = 'dark' if st.session_state.theme == 'dark' else 'light'
-    chart = StreamlitChart(width=1000, height=500)
-    chart.layout_options = { "backgroundColor": "#0e1117" if chart_theme == 'dark' else "#ffffff", "textColor": "#f0f0f0" if chart_theme == 'dark' else "#212529" }
-    chart.grid_options = { "vertLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"}, "horzLines": {"color": "#444" if chart_theme == 'dark' else "#ddd"} }
-    chart.crosshair_options = { "mode": 1, "vertLine": {"color": "#C0C0C0", "style": 2, "width": 1}, "horzLine": {"color": "#C0C0C0", "style": 2, "width": 1} }
-
-    df_reset = df_final.reset_index()
-    index_col_name = df_reset.columns[0]
-    df_reset['time'] = df_reset[index_col_name].dt.strftime('%Y-%m-%d %H:%M')
-    df_chart_clean = df_reset.dropna(subset=['sma']) 
-    
-    df_chart_data = df_chart_clean[['time', 'open', 'high', 'low', 'close']]
-    sma_data = df_chart_clean[['time', 'sma']]
-    
-    buy_signals = df_chart_clean[df_chart_clean['signal'] == 1]
-    sell_signals = df_chart_clean[df_chart_clean['signal'] == -1]
-    buy_markers = [{"time": row['time'], "position": "belowBar", "color": "#26a69a", "shape": "arrowUp", "text": "BUY"} for _, row in buy_signals.iterrows()]
-    sell_markers = [{"time": row['time'], "position": "aboveBar", "color": "#ef5350", "shape": "arrowDown", "text": "SELL"} for _, row in sell_signals.iterrows()]
-    
-    chart.set(df_chart_data)
-    sma_line = chart.create_line(name="sma", color="#ff9800", width=2)
-    sma_line.set(sma_data)
-    chart.markers = buy_markers + sell_markers
-    chart.load()
 
     # === NEW: NATIVE ECONOMIC CALENDAR (STYLED) ===
     st.markdown("---")
@@ -716,32 +712,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button("Refresh Calendar"): st.cache_data.clear(); st.rerun()
     else:
         show_backup_widget()
-
-    # === SUBPLOTS ===
-    fig_subplots = make_subplots(rows=2 if show_rsi and show_macd else 1, cols=1, shared_xaxes=True, vertical_spacing=0.1, row_heights=[0.5, 0.5] if show_rsi and show_macd else [1.0])
-    num_subplots = (1 if show_rsi else 0) + (1 if show_macd else 0)
-    current_row = 1
-    if show_rsi:
-        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['rsi'], name=f"RSI({rsi_period})", line=dict(color="#9c27b0")), row=current_row, col=1)
-        fig_subplots.add_hline(y=alert_rsi_high, line_dash="dash", line_color="#ef5350", annotation_text=f"Overbought ({alert_rsi_high})", row=current_row, col=1)
-        fig_subplots.add_hline(y=alert_rsi_low, line_dash="dash", line_color="#26a69a", annotation_text=f"Oversold ({alert_rsi_low})", row=current_row, col=1)
-        fig_subplots.add_hline(y=50, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
-        fig_subplots.update_yaxes(title_text=f"RSI({rsi_period})", range=[0, 100], row=current_row, col=1)
-        current_row += 1
-    if show_macd:
-        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_line'], name='MACD', line=dict(color='#2196f3')), row=current_row, col=1)
-        fig_subplots.add_trace(go.Scatter(x=df_final.index, y=df_final['macd_signal'], name='Signal', line=dict(color='#ff9800')), row=current_row, col=1)
-        colors = ['#26a69a' if val >= 0 else '#ef5350' for val in df_final['macd_hist']]
-        fig_subplots.add_trace(go.Bar(x=df_final.index, y=df_final['macd_hist'], name='Histogram', marker_color=colors), row=current_row, col=1)
-        fig_subplots.update_yaxes(title_text="MACD", row=current_row, col=1)
-        fig_subplots.add_hline(y=0, line_dash="dot", line_color="#cccccc", row=current_row, col=1)
-        
-    if show_rsi or show_macd:
-        if num_subplots > 0:
-            fig_subplots.update_layout(height=300 * num_subplots, template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', xaxis_rangeslider_visible=False, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            st.plotly_chart(fig_subplots, use_container_width=True, config={'displayModeBar': False})
-
-    check_for_live_signal(df_final, selected_pair, tp_pips, sl_pips)
 
     # === STRATEGY SCANNER (PREMIUM) ===
     if is_premium:
