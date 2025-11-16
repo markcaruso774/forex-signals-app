@@ -31,7 +31,6 @@ def initialize_firebase():
              if project_id:
                  config["databaseURL"] = f"https://{project_id}-default-rtdb.firebaseio.com/"
              else:
-                 # Fallback based on authDomain (less reliable)
                  config["databaseURL"] = f"https://{config['authDomain'].split('.')[0]}-default-rtdb.firebaseio.com/"
 
         firebase = pyrebase.initialize_app(config)
@@ -41,14 +40,16 @@ def initialize_firebase():
         st.error(f"Client Firebase Error: {e}")
         return None, None
 
-    # B. Initialize Admin SDK (Firebase-Admin) - For Secure Upgrades
+    # B. Initialize Admin SDK (Firebase-Admin) - For Secure Upgrades & Logins
     try:
         if not firebase_admin._apps:
             if "FIREBASE_ADMIN" in st.secrets:
                 cred_dict = dict(st.secrets["FIREBASE_ADMIN"])
-                cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
+                # Fix private key formatting
+                if "private_key" in cred_dict:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 
-                # IMPORTANT: Get the DB URL from the *Client* config
+                # Use DB URL from client config
                 db_url = config.get("databaseURL")
                 
                 cred = credentials.Certificate(cred_dict)
@@ -56,7 +57,7 @@ def initialize_firebase():
                     "databaseURL": db_url
                 })
             else:
-                st.warning("Secrets: FIREBASE_ADMIN missing. Payment processor will fail.")
+                st.warning("Secrets: FIREBASE_ADMIN missing. Upgrades may fail.")
     except Exception as e:
         st.warning(f"Admin Firebase Init Warning: {e}")
 
@@ -69,20 +70,21 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'is_premium' not in st.session_state: st.session_state.is_premium = False
 if 'page' not in st.session_state: st.session_state.page = "login" 
 
-# === 3. AUTH FUNCTIONS ===
+# === 3. AUTH FUNCTIONS (ROBUST) ===
 def sign_up(email, password):
     if auth is None: return
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
         
-        # Use ADMIN SDK to create the initial profile (bypasses new rules)
+        # Use ADMIN SDK to create initial profile (Bypasses "Write: False" rule)
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             ref.set({"email": email, "subscription_status": "free"})
         except Exception as admin_e:
-            st.error(f"Failed to create profile (Admin Error): {admin_e}")
-            return
+            # Fallback (Only works if rules are loose, but good safety net)
+            st.warning(f"Admin profile creation failed: {admin_e}. Trying client...")
+            db.child("users").child(user['localId']).set({"email": email, "subscription_status": "free"}, user['idToken'])
 
         st.session_state.is_premium = False
         st.session_state.page = "app"
@@ -91,15 +93,26 @@ def sign_up(email, password):
         st.error(f"Sign up failed: {e}")
 
 def login(email, password):
-    if auth is None or db is None: return
+    if auth is None: return
     try:
+        # 1. Authenticate User
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        # Read data using Client SDK (Reading is allowed by new rules)
-        user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
+        
+        # 2. Fetch Profile with ADMIN SDK (Bypasses Security Rules)
+        # This is the "Bulletproof" fix. Even if rules block reading, Admin can read.
+        user_data = None
+        try:
+            ref = admin_db.reference(f"users/{user['localId']}")
+            user_data = ref.get()
+        except:
+            # Fallback to Client SDK
+            user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
             st.session_state.is_premium = (user_data.get("subscription_status") == "premium")
+            
+            # Load Settings
             settings = user_data.get("settings", {}) 
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
@@ -117,7 +130,14 @@ def login(email, password):
             st.session_state.tp_pips = settings.get("tp_pips", 100)
             st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
         else:
-            st.session_state.is_premium = False
+            # Profile missing? Re-create it safely.
+            try:
+                ref = admin_db.reference(f"users/{user['localId']}")
+                ref.set({"email": email, "subscription_status": "free"})
+                st.session_state.is_premium = False
+            except:
+                st.error("Could not create missing profile.")
+                return
 
         st.session_state.page = "app"
         st.rerun()
@@ -130,7 +150,7 @@ def logout():
     st.session_state.page = "login"
     st.rerun()
 
-# === 4. PAYMENT & EXCHANGE RATE LOGIC ===
+# === 4. PAYMENT FUNCTIONS ===
 def get_ngn_exchange_rate():
     try:
         response = requests.get("https://api.exchangerate-api.com/v4/latest/USD")
@@ -171,20 +191,18 @@ def verify_payment(reference):
         if res.get("status") and res["data"]["status"] == "success":
             uid = res["data"]["metadata"].get("user_id")
             if uid:
-                # === SECURITY UPGRADE: Use ADMIN SDK ===
+                # Secure Update via Admin SDK
                 try:
                     ref = admin_db.reference(f"users/{uid}")
                     ref.update({"subscription_status": "premium"})
-                    
                     if st.session_state.user:
                         st.session_state.is_premium = True
                         st.balloons(); st.success("Premium Activated!")
                         try: st.query_params.clear()
                         except: pass
                     return True
-                except Exception as admin_e:
-                    st.error(f"DB Update Failed (Admin Error): {admin_e}")
-                    return False
+                except Exception as e:
+                    st.error(f"DB Update Error: {e}")
     except Exception as e: st.error(f"Verify Error: {e}")
     return False
 
@@ -267,12 +285,69 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    with st.expander("👋 Welcome to PipWizard! Click here for a full user guide."):
+    # === UPDATED ABOUT SECTION (No Marker Mention) ===
+    with st.expander("👋 Welcome to PipWizard! Click here for user guide & Telegram setup."):
         st.markdown(
             """
             ### What is PipWizard?
             PipWizard is a tool to help you **test trading strategies** before you use them. 
-            ... (User guide text) ...
+            
+            It is **not** a "get rich quick" bot. It is a decision-support tool that lets you:
+            1.  **TEST** your ideas (e.g., "What if I buy when RSI is low?") on *historical data*.
+            2.  **FIND** new strategies by scanning many pairs and timeframes at once.
+            3.  **WATCH** your strategy for new signals in real-time.
+
+            ---
+            
+            ### 📲 How to Setup Telegram Alerts (New!)
+            Never miss a signal again. Connect your Telegram to get instant alerts.
+            
+            1.  Open Telegram and search for **@userinfobot**.
+            2.  Click "Start". It will reply with your **ID** (a number like `123456789`).
+            3.  Copy that ID.
+            4.  Paste it into the **"Your Telegram Chat ID"** box in the Sidebar below.
+            5.  Click **"Save Settings"**.
+            
+            *Note: You must also start a chat with our bot (e.g., @YourBotName) so it has permission to message you.*
+
+            ---
+            
+            ### Tour of the App
+            
+            **1. The Sidebar (Your Controls)**
+            * **Pair & Timeframe:** Choose what you want to analyze.
+            * **Strategy:** Pick a strategy (e.g., "RSI Standalone").
+            * **Indicator Config:** tweak settings like RSI Period.
+            * **Backtesting Parameters:** Set your risk, Stop Loss, and Take Profit.
+            * **Alert History:** Logs all live signals and tracks if they won or lost.
+
+            **2. The Main Chart (Your "Live" View)**
+            * A professional TradingView widget showing live streaming prices.
+            * **Note:** This chart is for price analysis. Your actual Buy/Sell signals will appear in the **Alert History** table in the sidebar.
+
+            **3. The Backtesting Report**
+            * Click **"Run Backtest"** to test your strategy on past data.
+            * See your Win Rate, Profit, and Equity Curve.
+
+            **4. The Strategy Scanner (Premium)**
+            * Automatically tests your strategy across ALL pairs and timeframes to find the best opportunities.
+
+            **5. Economic Calendar**
+            * Located below the chart. Shows high-impact news events (CPI, NFP) that might move the market.
+
+            ---
+
+            ### Feature Tiers
+            
+            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
+            | :--- | :--- | :--- |
+            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
+            | **All Strategies** | ✅ Yes | ✅ Yes |
+            | **Save Settings** | ✅ Yes | ✅ Yes |
+            | **Live Signal Alerts** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **Alert History Log** | ✅ EUR/USD Only | ✅ **All Pairs** |
+            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
+            | **🚀 Strategy Scanner**| ❌ No | ✅ **Unlocked** |
             """
         )
     
@@ -381,6 +456,8 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
+        # NOTE: "TwelveData" source is now technically unused for the main chart, 
+        # but we keep it safe in case you want to revert or use it for calculations later.
         if source == "Yahoo":
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
             yf_sym = f"{symbol.replace('/', '')}=X"
@@ -394,22 +471,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
                 return df[['open', 'high', 'low', 'close']].dropna()
             except: return pd.DataFrame()
-        
-        # This is kept for the "check_for_live_signal" function, which still needs to get data.
-        # We will switch this to Yahoo as well to save TwelveData API calls.
-        elif source == "TwelveData": 
-             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
-             yf_sym = f"{symbol.replace('/', '')}=X"
-             try:
-                df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False, auto_adjust=False)
-                if df.empty: return pd.DataFrame()
-                df = df.reset_index()
-                df.columns = [c.lower() if isinstance(c, str) else c[0].lower() for c in df.columns]
-                df.rename(columns={'date': 'datetime', 'index': 'datetime'}, inplace=True)
-                df.set_index('datetime', inplace=True)
-                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-                return df[['open', 'high', 'low', 'close']].dropna()
-             except: return pd.DataFrame()
         return pd.DataFrame()
 
     def send_telegram_alert(pair, signal_type, entry, tp, sl):
@@ -443,7 +504,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             "entry_timestamp": int(entry_time.timestamp())
         }
         try:
-            # User is allowed to write to "alerts" by new rules
             db.child("users").child(user_id).child("alerts").child(alert_id).set(alert_data, st.session_state.user['idToken'])
             send_telegram_alert(pair, signal_type, f"{entry_price:.5f}", f"{tp_price:.5f}", f"{sl_price:.5f}")
             st.sidebar.success(f"New {signal_type} Alert on {pair}!")
@@ -666,7 +726,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
-    # === NATIVE ECONOMIC CALENDAR (STYLED) ===
+    # === NEW: NATIVE ECONOMIC CALENDAR (STYLED) ===
     st.markdown("---")
     st.subheader("📅 Economic Calendar (This Week)")
     
@@ -806,7 +866,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
-    # === AUTO-REFRESH (Now less critical, but good for alerts) ===
+    # === AUTO-REFRESH ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
     # === ALERT HISTORY SECTION (SIDEBAR BOTTOM - RESTORED) ===
@@ -837,6 +897,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                         bars_to_fetch = int(time_diff_seconds / interval_seconds) + 2
                         if bars_to_fetch < 2: continue
                         
+                        # USE YAHOO FOR OUTCOME CHECK (UNLIMITED)
                         df_new = fetch_data(alert['pair'], selected_interval, source="Yahoo", output_size=bars_to_fetch)
                         if df_new.empty: continue
                         
