@@ -10,3 +10,4 @@ requests
 TA-Lib
 google-cloud-storage
 setuptools
+firebase-admin
