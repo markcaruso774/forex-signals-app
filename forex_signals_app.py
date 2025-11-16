@@ -661,40 +661,26 @@ elif st.session_state.page == "app" and st.session_state.user:
     chart.markers = buy_markers + sell_markers
     chart.load()
 
-    # === NEW: NATIVE ECONOMIC CALENDAR ===
+    # === NEW: NATIVE ECONOMIC CALENDAR (STYLED) ===
     st.markdown("---")
     st.subheader("📅 Economic Calendar (This Week)")
     
-    # Backup Function: TradingView Widget
     def show_backup_widget():
-        calendar_html = """
-        <div class="tradingview-widget-container">
-          <div class="tradingview-widget-container__widget"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
-          { "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }
-          </script>
-        </div>
-        """
+        calendar_html = """<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{ "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }</script></div>"""
         components.html(calendar_html, height=520, scrolling=True)
 
-    # Main Function: Fetch Raw Data
-    @st.cache_data(ttl=3600) # Cache for 1 hour
+    @st.cache_data(ttl=3600)
     def get_native_calendar():
         try:
-            # Fetch XML from ForexFactory (Public Feed)
             url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
-            # User-Agent is critical to avoid 403 Forbidden
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
             response = requests.get(url, headers=headers, timeout=10)
-            
             if response.status_code != 200: return None
-            
             root = ET.fromstring(response.content)
             data = []
             for event in root.findall('event'):
                 country = event.find('country').text
-                if country not in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]: continue # Filter Majors
-                
+                if country not in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]: continue 
                 data.append({
                     "Currency": country,
                     "Event": event.find('title').text,
@@ -703,44 +689,32 @@ elif st.session_state.page == "app" and st.session_state.user:
                     "Time": event.find('time').text,
                     "Forecast": event.find('forecast').text if event.find('forecast') is not None else "",
                     "Previous": event.find('previous').text if event.find('previous') is not None else "",
-                    "Actual": "**" + event.find('actual').text + "**" if event.find('actual') is not None and event.find('actual').text else "" # Bold the actual
+                    "Actual": event.find('actual').text if event.find('actual') is not None else ""
                 })
-            
-            if not data: return None
-            
-            df = pd.DataFrame(data)
-            # Sort logic if needed, but XML is usually sorted
-            return df
-            
-        except Exception as e:
-            # print(f"Calendar Error: {e}") # Debugging
-            return None
+            return pd.DataFrame(data) if data else None
+        except Exception: return None
 
-    # Render the Calendar
     df_cal = get_native_calendar()
     
     if df_cal is not None and not df_cal.empty:
-        # Style the dataframe
+        # === PANDAS STYLING ===
+        def highlight_impact(val):
+            if val == 'High': return 'background-color: #ff4b4b; color: white; font-weight: bold;'
+            elif val == 'Medium': return 'background-color: #ffa726; color: black; font-weight: bold;'
+            elif val == 'Low': return 'background-color: #fff59d; color: black;'
+            return ''
+        
+        # Apply style and render
         st.dataframe(
-            df_cal,
+            df_cal.style.map(highlight_impact, subset=['Impact']),
             column_config={
-                "Impact": st.column_config.TextColumn(
-                    "Impact",
-                    help="High (Red), Medium (Orange), Low (Yellow)",
-                ),
-                "Actual": st.column_config.TextColumn(
-                    "Actual",
-                    help="Actual released figure",
-                ),
+                "Actual": st.column_config.TextColumn("Actual", help="Released Value"),
             },
             hide_index=True,
-            width=1000 # stretch to fit container
+            width=1000
         )
-        if st.button("Refresh Calendar"):
-            st.cache_data.clear()
-            st.rerun()
+        if st.button("Refresh Calendar"): st.cache_data.clear(); st.rerun()
     else:
-        # Fallback to Widget if Native fails
         show_backup_widget()
 
     # === SUBPLOTS ===
