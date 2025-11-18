@@ -16,6 +16,7 @@ import uuid
 import yfinance as yf 
 import xml.etree.ElementTree as ET 
 from lightweight_charts.widgets import StreamlitChart
+import os # To check if logo exists
 
 # === 1. FIREBASE CONFIGURATION (Client & Admin) ===
 def initialize_firebase():
@@ -69,6 +70,23 @@ auth, db = initialize_firebase()
 if 'user' not in st.session_state: st.session_state.user = None
 if 'is_premium' not in st.session_state: st.session_state.is_premium = False
 if 'page' not in st.session_state: st.session_state.page = "login" 
+
+# === HELPER: LOGO LOADER ===
+# Uses logo.png if found, otherwise falls back to emoji
+def get_page_icon():
+    return "logo.png" if os.path.exists("logo.png") else "🧙‍♂️"
+
+def show_logo():
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=150)
+    else:
+        st.title("PipWizard 🧙‍♂️")
+
+def show_sidebar_logo():
+    if os.path.exists("logo.png"):
+        st.sidebar.image("logo.png", use_container_width=True)
+    else:
+        st.sidebar.title("PipWizard 🧙‍♂️")
 
 # === 3. AUTH FUNCTIONS (ROBUST) ===
 def sign_up(email, password):
@@ -208,10 +226,13 @@ def verify_payment(reference):
 
 # === 5. LOGIN PAGE ===
 if st.session_state.page == "login":
-    st.set_page_config(page_title="Login - PipWizard", page_icon="🧙‍♂️", layout="centered")
+    st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
-        st.title("PipWizard 🧙‍♂️ 📈📉")
+        # === NEW LOGO DISPLAY ===
+        show_logo()
+        st.markdown("### 📈📉 Live Forex Signals")
+        
         if "trxref" in st.query_params: st.info("✅ **Payment Detected!** Log in to activate.")
         else: st.text("Please log in or sign up.")
         action = st.radio("Action:", ("Login", "Sign Up"), horizontal=True, index=0)
@@ -224,8 +245,9 @@ if st.session_state.page == "login":
 
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
-    st.set_page_config(page_title="Profile", page_icon="🧙‍♂️", layout="centered")
-    st.title("Profile 🧙‍♂️")
+    st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
+    show_logo()
+    st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
     
     if st.session_state.is_premium:
@@ -247,7 +269,7 @@ elif st.session_state.page == "profile":
 
 # === 7. MAIN APP ===
 elif st.session_state.page == "app" and st.session_state.user:
-    st.set_page_config(page_title="PipWizard", page_icon="🧙‍♂️", layout="wide")
+    st.set_page_config(page_title="PipWizard", page_icon=get_page_icon(), layout="wide")
     if "trxref" in st.query_params:
         with st.spinner("Verifying..."): verify_payment(st.query_params["trxref"])
 
@@ -263,6 +285,14 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.markdown(f"""<style>
         .stApp {{ background-color: {'#0e1117' if st.session_state.theme == 'dark' else '#ffffff'}; color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'}; }}
         section[data-testid="stSidebar"] {{ background-color: {'#0e1117' if st.session_state.theme == 'dark' else '#f0f2f6'}; }}
+        
+        /* === LAYOUT FIX: REMOVE TOP PADDING === */
+        .block-container {{
+            padding-top: 1rem !important;
+            padding-bottom: 1rem !important;
+            max-width: 100% !important;
+        }}
+
         .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'} !important; }}
         div.stButton > button:first-child {{ background-color: #007bff !important; color: white !important; border: none; }}
         div[data-testid="stTextInput"] input {{ background-color: #ffffff !important; color: #000000 !important; }}
@@ -277,8 +307,10 @@ elif st.session_state.page == "app" and st.session_state.user:
         div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{ color: #f0f0f0; }}
     </style>""", unsafe_allow_html=True)
 
+    # === HEADER WITH LOGO ===
     col1, col2 = st.columns([6, 1])
     with col1:
+        # Using text because image is in sidebar or page config now to save space
         st.title("PipWizard 🧙‍♂️ 📈📉 – Live Signals")
     with col2:
         theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
@@ -351,7 +383,8 @@ elif st.session_state.page == "app" and st.session_state.user:
             """
         )
     
-    st.sidebar.title("PipWizard 🧙‍♂️ 📈📉")
+    # === NEW SIDEBAR LOGO ===
+    show_sidebar_logo()
     
     user_id = st.session_state.user['localId']
     user_email = st.session_state.user.get('email', 'User')
