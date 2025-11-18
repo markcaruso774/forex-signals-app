@@ -247,7 +247,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     if "trxref" in st.query_params:
         with st.spinner("Verifying..."): verify_payment(st.query_params["trxref"])
 
-    ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF"]
+    ALL_PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CAD", "AUD/USD", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", "USD/CHF", "XAU/USD", "BTC/USD"]
     FREE_PAIR = "EUR/USD"
     PREMIUM_PAIRS = ALL_PAIRS
     INTERVALS = {"1min": "1min", "5min": "5min", "15min": "15min", "30min": "30min", "1h": "1h"}
