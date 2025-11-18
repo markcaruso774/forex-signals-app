@@ -18,9 +18,8 @@ import xml.etree.ElementTree as ET
 from lightweight_charts.widgets import StreamlitChart
 import os
 
-# === 1. FIREBASE CONFIGURATION (Client & Admin) ===
+# === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
-    # A. Initialize Client SDK (Pyrebase) - For Login/Signup
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
             st.error("Secrets: FIREBASE_CONFIG missing.")
@@ -41,7 +40,6 @@ def initialize_firebase():
         st.error(f"Client Firebase Error: {e}")
         return None, None
 
-    # B. Initialize Admin SDK (Firebase-Admin) - For Secure Upgrades & Logins
     try:
         if not firebase_admin._apps:
             if "FIREBASE_ADMIN" in st.secrets:
@@ -50,15 +48,12 @@ def initialize_firebase():
                     cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 
                 db_url = config.get("databaseURL")
-                
                 cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred, {
-                    "databaseURL": db_url
-                })
+                firebase_admin.initialize_app(cred, {"databaseURL": db_url})
             else:
-                st.warning("Secrets: FIREBASE_ADMIN missing. Upgrades may fail.")
+                st.warning("Secrets: FIREBASE_ADMIN missing.")
     except Exception as e:
-        st.warning(f"Admin Firebase Init Warning: {e}")
+        st.warning(f"Admin Init Warning: {e}")
 
     return auth, db
 
@@ -69,18 +64,17 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'is_premium' not in st.session_state: st.session_state.is_premium = False
 if 'page' not in st.session_state: st.session_state.page = "login" 
 
-# === HELPER: LOGO LOADER (FIXED SIZE) ===
+# === HELPER: LOGO LOADER ===
 def get_page_icon():
     return "logo.png" if os.path.exists("logo.png") else "🧙‍♂️"
 
 def show_sidebar_logo():
     if os.path.exists("logo.png"):
-        # FIX: Set width to 150px so it isn't huge
         st.sidebar.image("logo.png", width=150) 
     else:
         st.sidebar.title("PipWizard 🧙‍♂️")
 
-# === 3. AUTH FUNCTIONS (ROBUST) ===
+# === 3. AUTH FUNCTIONS ===
 def sign_up(email, password):
     if auth is None: return
     try:
@@ -89,10 +83,8 @@ def sign_up(email, password):
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             ref.set({"email": email, "subscription_status": "free"})
-        except Exception as admin_e:
-            st.warning(f"Admin profile creation failed: {admin_e}. Trying client...")
+        except:
             db.child("users").child(user['localId']).set({"email": email, "subscription_status": "free"}, user['idToken'])
-
         st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
@@ -209,11 +201,8 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
-        # Main Page Logo (Small & Centered)
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=120)
-        else:
-            st.title("PipWizard 🧙‍♂️")
+        if os.path.exists("logo.png"): st.image("logo.png", width=120)
+        else: st.title("PipWizard 🧙‍♂️")
             
         st.markdown("### 👋 Welcome to PipWizard!")
         st.markdown("#### Live Forex Signals & Strategy Tester")
@@ -231,7 +220,6 @@ if st.session_state.page == "login":
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
-    # Profile Logo
     if os.path.exists("logo.png"): st.image("logo.png", width=100)
     st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
@@ -293,18 +281,15 @@ elif st.session_state.page == "app" and st.session_state.user:
         div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{ color: #f0f0f0; }}
     </style>""", unsafe_allow_html=True)
 
-    # === HEADER ===
     col1, col2 = st.columns([6, 1])
     with col1:
-        st.title("PipWizard 🧙‍♂️ – Live Signals")
-        # === RESTORED WELCOME TEXT ===
+        st.title("PipWizard 🧙‍♂️ 📈📉 – Live Signals")
         st.markdown("##### 👋 Welcome! Analyze charts, check the calendar, or scan for signals.")
     with col2:
         theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === USER GUIDE EXPANDER ===
     with st.expander("📖 User Guide & Telegram Setup"):
         st.markdown(
             """
@@ -327,50 +312,29 @@ elif st.session_state.page == "app" and st.session_state.user:
             4.  Paste it into the **"Your Telegram Chat ID"** box in the Sidebar below.
             5.  Click **"Save Settings"**.
             
-            *Note: You must also start a chat with our bot (e.g., @YourBotName) so it has permission to message you.*
+            *Note: You must also start a chat with our bot so it has permission to message you.*
 
             ---
             
             ### Tour of the App
-            
-            **1. The Sidebar (Your Controls)**
-            * **Pair & Timeframe:** Choose what you want to analyze.
-            * **Strategy:** Pick a strategy (e.g., "RSI Standalone").
-            * **Indicator Config:** tweak settings like RSI Period.
-            * **Backtesting Parameters:** Set your risk, Stop Loss, and Take Profit.
-            * **Alert History:** Logs all live signals and tracks if they won or lost.
-
-            **2. The Main Chart (Your "Live" View)**
-            * A professional TradingView widget showing live streaming prices.
-            * **Note:** This chart is for price analysis. Your actual Buy/Sell signals will appear in the **Alert History** table in the sidebar.
-
-            **3. The Backtesting Report**
-            * Click **"Run Backtest"** to test your strategy on past data.
-            * See your Win Rate, Profit, and Equity Curve.
-
-            **4. The Strategy Scanner (Premium)**
-            * Automatically tests your strategy across ALL pairs and timeframes to find the best opportunities.
-
-            **5. Economic Calendar**
-            * Located below the chart. Shows high-impact news events (CPI, NFP) that might move the market.
+            * **The Sidebar:** Controls for Pair, Timeframe, Strategy, and Alerts.
+            * **The Main Chart:** Professional live TradingView feed.
+            * **The Backtester:** Click "Run Backtest" to prove your strategy works.
+            * **The Scanner:** (Premium) Automatically finds profitable trades.
+            * **Economic Calendar:** Shows upcoming high-impact news.
 
             ---
-
-            ### Feature Tiers
             
             | Feature | 🎁 Free Tier | ⭐ Premium Tier |
             | :--- | :--- | :--- |
-            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
-            | **All Strategies** | ✅ Yes | ✅ Yes |
-            | **Save Settings** | ✅ Yes | ✅ Yes |
-            | **Live Signal Alerts** | ✅ EUR/USD Only | ✅ **All Pairs** |
-            | **Alert History Log** | ✅ EUR/USD Only | ✅ **All Pairs** |
-            | **Currency Pairs** | 🔒 EUR/USD Only | ✅ **All 10+ Pairs** |
-            | **🚀 Strategy Scanner**| ❌ No | ✅ **Unlocked** |
+            | **Backtesting** | ✅ Yes | ✅ Yes |
+            | **Live Chart** | ✅ Yes | ✅ Yes |
+            | **EUR/USD Alerts** | ✅ Yes | ✅ Yes |
+            | **All Pair Alerts** | 🔒 No | ✅ **Yes** |
+            | **Strategy Scanner**| 🔒 No | ✅ **Yes** |
             """
         )
     
-    # === SIDEBAR LOGO (FIXED SIZE) ===
     show_sidebar_logo()
     
     user_id = st.session_state.user['localId']
@@ -440,7 +404,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.rerun()
 
     st.sidebar.markdown("---")
-    
     st.sidebar.subheader("Notification Settings")
     telegram_chat_id = st.sidebar.text_input("Your Telegram Chat ID", 
                                              value=st.session_state.get("telegram_chat_id", ""), 
@@ -467,7 +430,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "telegram_chat_id": telegram_chat_id 
             }
             try:
-                # User is allowed to write to "settings" by new rules
                 db.child("users").child(user_id).child("settings").set(settings_to_save, st.session_state.user['idToken'])
                 st.session_state.telegram_chat_id = telegram_chat_id
                 st.sidebar.success("Settings saved successfully!")
@@ -476,8 +438,6 @@ elif st.session_state.page == "app" and st.session_state.user:
 
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
-        # NOTE: "TwelveData" source is now technically unused for the main chart, 
-        # but we keep it safe in case you want to revert or use it for calculations later.
         if source == "Yahoo":
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
             yf_sym = f"{symbol.replace('/', '')}=X"
@@ -648,10 +608,8 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.subheader(f"**{selected_pair}** – **{selected_interval}**")
     
     def show_advanced_chart(symbol):
-        # Map format "EUR/USD" -> "FX:EURUSD" for TradingView
         tv_symbol = f"FX:{symbol.replace('/', '')}"
         
-        # Advanced Real-Time Chart Widget with RSI and MACD
         html_code = f"""
         <div class="tradingview-widget-container">
           <div id="tradingview_advanced_chart"></div>
@@ -681,13 +639,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
         components.html(html_code, height=620)
 
-    # Display the Advanced Widget
     show_advanced_chart(selected_pair)
     
-    # We still need to fetch data internally to check for signals (Alert System)
-    # This "invisible" fetch keeps your "Live Alerts" working in the background.
     with st.spinner(f"Analyzing market data for alerts..."):
-         # Use Yahoo for this check (fast, no API limit)
          df_analysis = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
          if not df_analysis.empty:
              df_ind = calculate_indicators(df_analysis, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
@@ -697,7 +651,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     # === BACKTEST SECTION ===
     if run_backtest_button:
         with st.spinner("Running backtest on real market data..."):
-            # USE YAHOO FOR BACKTEST (UNLIMITED)
             df_backtest_data = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
             if not df_backtest_data.empty:
                 df_bt_ind = calculate_indicators(df_backtest_data, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
@@ -738,7 +691,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         st.subheader("Detailed Trade Log")
         trade_df_display = results['trade_df'].copy()
-        # Clean Headers
         trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
         st.dataframe(trade_df_display, width=1000) 
         
@@ -754,7 +706,8 @@ elif st.session_state.page == "app" and st.session_state.user:
         calendar_html = """<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{ "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }</script></div>"""
         components.html(calendar_html, height=520, scrolling=True)
 
-    @st.cache_data(ttl=300)
+    # === FIX: CACHE TIME REDUCED TO 300 SECONDS (5 MINS) ===
+    @st.cache_data(ttl=300) 
     def get_native_calendar():
         try:
             url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
@@ -782,14 +735,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     df_cal = get_native_calendar()
     
     if df_cal is not None and not df_cal.empty:
-        # === PANDAS STYLING ===
         def highlight_impact(val):
             if val == 'High': return 'background-color: #ff4b4b; color: white; font-weight: bold;'
             elif val == 'Medium': return 'background-color: #ffa726; color: black; font-weight: bold;'
             elif val == 'Low': return 'background-color: #fff59d; color: black;'
             return ''
         
-        # Apply style and render
         st.dataframe(
             df_cal.style.map(highlight_impact, subset=['Impact']),
             column_config={
@@ -798,6 +749,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             hide_index=True,
             width=1000
         )
+        # === BUTTON TO FORCE REFRESH ===
         if st.button("Refresh Calendar"): st.cache_data.clear(); st.rerun()
     else:
         show_backup_widget()
