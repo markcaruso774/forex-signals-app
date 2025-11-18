@@ -285,7 +285,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === UPDATED ABOUT SECTION (No Marker Mention) ===
+    # === UPDATED ABOUT SECTION ===
     with st.expander("👋 Welcome to PipWizard! Click here for user guide & Telegram setup."):
         st.markdown(
             """
@@ -831,8 +831,24 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if scan_results:
                         st.subheader("Scan Results Overview")
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
-                        # FIX: Updated width parameter to avoid warning
-                        st.dataframe(results_df.style.format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}), width=1000)
+                        
+                        # === STYLING FUNCTIONS ===
+                        def style_win_rate(val):
+                            color = '#26a69a' if val >= 50 else '#ef5350' 
+                            return f'background-color: {color}; color: white; font-weight: bold;'
+                        
+                        def style_profit(val):
+                            color = '#26a69a' if val > 0 else '#ef5350'
+                            return f'color: {color}; font-weight: bold;'
+
+                        # Apply Styles
+                        st.dataframe(
+                            results_df.style
+                            .map(style_win_rate, subset=['Win Rate (%)'])
+                            .map(style_profit, subset=['Total Profit ($)'])
+                            .format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}),
+                            width=1000
+                        )
                     else: st.info("Scan completed, but no profitable trades were found.")
         st.markdown("</div>", unsafe_allow_html=True)
     else:
