@@ -754,7 +754,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         calendar_html = """<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{ "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }</script></div>"""
         components.html(calendar_html, height=520, scrolling=True)
 
-    @st.cache_data(ttl=3600)
+    @st.cache_data(ttl=300)
     def get_native_calendar():
         try:
             url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
