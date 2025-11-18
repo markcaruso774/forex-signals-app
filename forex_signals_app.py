@@ -16,7 +16,7 @@ import uuid
 import yfinance as yf 
 import xml.etree.ElementTree as ET 
 from lightweight_charts.widgets import StreamlitChart
-import os # To check if logo exists
+import os
 
 # === 1. FIREBASE CONFIGURATION (Client & Admin) ===
 def initialize_firebase():
@@ -46,11 +46,9 @@ def initialize_firebase():
         if not firebase_admin._apps:
             if "FIREBASE_ADMIN" in st.secrets:
                 cred_dict = dict(st.secrets["FIREBASE_ADMIN"])
-                # Fix private key formatting
                 if "private_key" in cred_dict:
                     cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 
-                # Use DB URL from client config
                 db_url = config.get("databaseURL")
                 
                 cred = credentials.Certificate(cred_dict)
@@ -71,20 +69,14 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'is_premium' not in st.session_state: st.session_state.is_premium = False
 if 'page' not in st.session_state: st.session_state.page = "login" 
 
-# === HELPER: LOGO LOADER ===
-# Uses logo.png if found, otherwise falls back to emoji
+# === HELPER: LOGO LOADER (FIXED SIZE) ===
 def get_page_icon():
     return "logo.png" if os.path.exists("logo.png") else "🧙‍♂️"
 
-def show_logo():
-    if os.path.exists("logo.png"):
-        st.image("logo.png", width=150)
-    else:
-        st.title("PipWizard 🧙‍♂️")
-
 def show_sidebar_logo():
     if os.path.exists("logo.png"):
-        st.sidebar.image("logo.png", use_container_width=True)
+        # FIX: Set width to 150px so it isn't huge
+        st.sidebar.image("logo.png", width=150) 
     else:
         st.sidebar.title("PipWizard 🧙‍♂️")
 
@@ -94,13 +86,10 @@ def sign_up(email, password):
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        
-        # Use ADMIN SDK to create initial profile (Bypasses "Write: False" rule)
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             ref.set({"email": email, "subscription_status": "free"})
         except Exception as admin_e:
-            # Fallback (Only works if rules are loose, but good safety net)
             st.warning(f"Admin profile creation failed: {admin_e}. Trying client...")
             db.child("users").child(user['localId']).set({"email": email, "subscription_status": "free"}, user['idToken'])
 
@@ -113,24 +102,17 @@ def sign_up(email, password):
 def login(email, password):
     if auth is None: return
     try:
-        # 1. Authenticate User
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        
-        # 2. Fetch Profile with ADMIN SDK (Bypasses Security Rules)
-        # This is the "Bulletproof" fix. Even if rules block reading, Admin can read.
         user_data = None
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             user_data = ref.get()
         except:
-            # Fallback to Client SDK
             user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
             st.session_state.is_premium = (user_data.get("subscription_status") == "premium")
-            
-            # Load Settings
             settings = user_data.get("settings", {}) 
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
@@ -148,7 +130,6 @@ def login(email, password):
             st.session_state.tp_pips = settings.get("tp_pips", 100)
             st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
         else:
-            # Profile missing? Re-create it safely.
             try:
                 ref = admin_db.reference(f"users/{user['localId']}")
                 ref.set({"email": email, "subscription_status": "free"})
@@ -209,7 +190,6 @@ def verify_payment(reference):
         if res.get("status") and res["data"]["status"] == "success":
             uid = res["data"]["metadata"].get("user_id")
             if uid:
-                # Secure Update via Admin SDK
                 try:
                     ref = admin_db.reference(f"users/{uid}")
                     ref.update({"subscription_status": "premium"})
@@ -229,12 +209,17 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
-        # === NEW LOGO DISPLAY ===
-        show_logo()
-        st.markdown("### 📈📉 Live Forex Signals")
+        # Main Page Logo (Small & Centered)
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=120)
+        else:
+            st.title("PipWizard 🧙‍♂️")
+            
+        st.markdown("### 👋 Welcome to PipWizard!")
+        st.markdown("#### Live Forex Signals & Strategy Tester")
         
         if "trxref" in st.query_params: st.info("✅ **Payment Detected!** Log in to activate.")
-        else: st.text("Please log in or sign up.")
+        else: st.text("Please log in or sign up to continue.")
         action = st.radio("Action:", ("Login", "Sign Up"), horizontal=True, index=0)
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
@@ -246,7 +231,8 @@ if st.session_state.page == "login":
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
-    show_logo()
+    # Profile Logo
+    if os.path.exists("logo.png"): st.image("logo.png", width=100)
     st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
     
@@ -307,18 +293,19 @@ elif st.session_state.page == "app" and st.session_state.user:
         div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{ color: #f0f0f0; }}
     </style>""", unsafe_allow_html=True)
 
-    # === HEADER WITH LOGO ===
+    # === HEADER ===
     col1, col2 = st.columns([6, 1])
     with col1:
-        # Using text because image is in sidebar or page config now to save space
-        st.title("PipWizard 🧙‍♂️ 📈📉 – Live Signals")
+        st.title("PipWizard 🧙‍♂️ – Live Signals")
+        # === RESTORED WELCOME TEXT ===
+        st.markdown("##### 👋 Welcome! Analyze charts, check the calendar, or scan for signals.")
     with col2:
         theme_label = "☀️ Light" if st.session_state.theme == "dark" else "🌙 Dark"
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === UPDATED ABOUT SECTION ===
-    with st.expander("👋 Welcome to PipWizard! Click here for user guide & Telegram setup."):
+    # === USER GUIDE EXPANDER ===
+    with st.expander("📖 User Guide & Telegram Setup"):
         st.markdown(
             """
             ### What is PipWizard?
@@ -383,7 +370,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             """
         )
     
-    # === NEW SIDEBAR LOGO ===
+    # === SIDEBAR LOGO (FIXED SIZE) ===
     show_sidebar_logo()
     
     user_id = st.session_state.user['localId']
