@@ -18,8 +18,9 @@ import xml.etree.ElementTree as ET
 from lightweight_charts.widgets import StreamlitChart
 import os
 
-# === 1. FIREBASE CONFIGURATION ===
+# === 1. FIREBASE CONFIGURATION (Client & Admin) ===
 def initialize_firebase():
+    # A. Initialize Client SDK (Pyrebase) - For Login/Signup
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
             st.error("Secrets: FIREBASE_CONFIG missing.")
@@ -40,20 +41,26 @@ def initialize_firebase():
         st.error(f"Client Firebase Error: {e}")
         return None, None
 
+    # B. Initialize Admin SDK (Firebase-Admin) - For Secure Upgrades & Logins
     try:
         if not firebase_admin._apps:
             if "FIREBASE_ADMIN" in st.secrets:
                 cred_dict = dict(st.secrets["FIREBASE_ADMIN"])
+                # Fix private key formatting
                 if "private_key" in cred_dict:
                     cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 
+                # Use DB URL from client config
                 db_url = config.get("databaseURL")
+                
                 cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred, {"databaseURL": db_url})
+                firebase_admin.initialize_app(cred, {
+                    "databaseURL": db_url
+                })
             else:
-                st.warning("Secrets: FIREBASE_ADMIN missing.")
+                st.warning("Secrets: FIREBASE_ADMIN missing. Upgrades may fail.")
     except Exception as e:
-        st.warning(f"Admin Init Warning: {e}")
+        st.warning(f"Admin Firebase Init Warning: {e}")
 
     return auth, db
 
@@ -64,27 +71,33 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'is_premium' not in st.session_state: st.session_state.is_premium = False
 if 'page' not in st.session_state: st.session_state.page = "login" 
 
-# === HELPER: LOGO LOADER ===
+# === HELPER: LOGO LOADER (FIXED SIZE) ===
 def get_page_icon():
     return "logo.png" if os.path.exists("logo.png") else "🧙‍♂️"
 
 def show_sidebar_logo():
     if os.path.exists("logo.png"):
+        # FIX: Set width to 150px so it isn't huge
         st.sidebar.image("logo.png", width=150) 
     else:
         st.sidebar.title("PipWizard 🧙‍♂️")
 
-# === 3. AUTH FUNCTIONS ===
+# === 3. AUTH FUNCTIONS (ROBUST) ===
 def sign_up(email, password):
     if auth is None: return
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
+        
+        # Use ADMIN SDK to create initial profile (Bypasses "Write: False" rule)
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             ref.set({"email": email, "subscription_status": "free"})
-        except:
+        except Exception as admin_e:
+            # Fallback (Only works if rules are loose, but good safety net)
+            st.warning(f"Admin profile creation failed: {admin_e}. Trying client...")
             db.child("users").child(user['localId']).set({"email": email, "subscription_status": "free"}, user['idToken'])
+
         st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
@@ -94,21 +107,30 @@ def sign_up(email, password):
 def login(email, password):
     if auth is None: return
     try:
+        # 1. Authenticate User
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
+        
+        # 2. Fetch Profile with ADMIN SDK (Bypasses Security Rules)
+        # This is the "Bulletproof" fix. Even if rules block reading, Admin can read.
         user_data = None
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             user_data = ref.get()
         except:
+            # Fallback to Client SDK
             user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
             st.session_state.is_premium = (user_data.get("subscription_status") == "premium")
+            
+            # Load Settings
             settings = user_data.get("settings", {}) 
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
             st.session_state.strategy_name = settings.get("strategy_name", "RSI + SMA Crossover")
+            
+            # === LOAD INDICATOR SETTINGS ===
             st.session_state.rsi_period = settings.get("rsi_period", 14)
             st.session_state.sma_period = settings.get("sma_period", 20)
             st.session_state.alert_rsi_low = settings.get("alert_rsi_low", 35)
@@ -116,12 +138,21 @@ def login(email, password):
             st.session_state.macd_fast = settings.get("macd_fast", 12)
             st.session_state.macd_slow = settings.get("macd_slow", 26)
             st.session_state.macd_signal = settings.get("macd_signal", 9)
+            # New Strategy Settings
+            st.session_state.bb_period = settings.get("bb_period", 20)
+            st.session_state.bb_std = settings.get("bb_std", 2.0)
+            st.session_state.ema_short = settings.get("ema_short", 50)
+            st.session_state.ema_long = settings.get("ema_long", 200)
+            st.session_state.stoch_k = settings.get("stoch_k", 14)
+            st.session_state.stoch_d = settings.get("stoch_d", 3)
+            
             st.session_state.capital = settings.get("capital", 10000)
             st.session_state.risk_pct = settings.get("risk_pct", 1.0)
             st.session_state.sl_pips = settings.get("sl_pips", 50)
             st.session_state.tp_pips = settings.get("tp_pips", 100)
             st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
         else:
+            # Profile missing? Re-create it safely.
             try:
                 ref = admin_db.reference(f"users/{user['localId']}")
                 ref.set({"email": email, "subscription_status": "free"})
@@ -182,6 +213,7 @@ def verify_payment(reference):
         if res.get("status") and res["data"]["status"] == "success":
             uid = res["data"]["metadata"].get("user_id")
             if uid:
+                # Secure Update via Admin SDK
                 try:
                     ref = admin_db.reference(f"users/{uid}")
                     ref.update({"subscription_status": "premium"})
@@ -201,8 +233,11 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
-        if os.path.exists("logo.png"): st.image("logo.png", width=120)
-        else: st.title("PipWizard 🧙‍♂️")
+        # === FIX: LOGO SIZE & WELCOME TEXT ===
+        if os.path.exists("logo.png"):
+            st.image("logo.png", width=120) # Fixed width
+        else:
+            st.title("PipWizard 🧙‍♂️")
             
         st.markdown("### 👋 Welcome to PipWizard!")
         st.markdown("#### Live Forex Signals & Strategy Tester")
@@ -220,6 +255,7 @@ if st.session_state.page == "login":
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
+    # Profile Logo
     if os.path.exists("logo.png"): st.image("logo.png", width=100)
     st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
@@ -296,45 +332,22 @@ elif st.session_state.page == "app" and st.session_state.user:
             ### What is PipWizard?
             PipWizard is a tool to help you **test trading strategies** before you use them. 
             
-            It is **not** a "get rich quick" bot. It is a decision-support tool that lets you:
-            1.  **TEST** your ideas (e.g., "What if I buy when RSI is low?") on *historical data*.
-            2.  **FIND** new strategies by scanning many pairs and timeframes at once.
-            3.  **WATCH** your strategy for new signals in real-time.
-
-            ---
-            
             ### 📲 How to Setup Telegram Alerts (New!)
-            Never miss a signal again. Connect your Telegram to get instant alerts.
-            
-            1.  Open Telegram and search for **@userinfobot**.
-            2.  Click "Start". It will reply with your **ID** (a number like `123456789`).
-            3.  Copy that ID.
-            4.  Paste it into the **"Your Telegram Chat ID"** box in the Sidebar below.
-            5.  Click **"Save Settings"**.
-            
-            *Note: You must also start a chat with our bot so it has permission to message you.*
+            1.  Search Telegram for **@userinfobot** -> Click "Start" -> Copy your **ID**.
+            2.  Paste it in the sidebar below and click **"Save Settings"**.
+            3.  *You must also start a chat with our bot so it has permission to message you.*
 
             ---
             
-            ### Tour of the App
-            * **The Sidebar:** Controls for Pair, Timeframe, Strategy, and Alerts.
-            * **The Main Chart:** Professional live TradingView feed.
-            * **The Backtester:** Click "Run Backtest" to prove your strategy works.
-            * **The Scanner:** (Premium) Automatically finds profitable trades.
-            * **Economic Calendar:** Shows upcoming high-impact news.
-
-            ---
-            
-            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
-            | :--- | :--- | :--- |
-            | **Backtesting** | ✅ Yes | ✅ Yes |
-            | **Live Chart** | ✅ Yes | ✅ Yes |
-            | **EUR/USD Alerts** | ✅ Yes | ✅ Yes |
-            | **All Pair Alerts** | 🔒 No | ✅ **Yes** |
-            | **Strategy Scanner**| 🔒 No | ✅ **Yes** |
+            ### Strategy Guide
+            * **EMA Golden Cross:** Good for Trends. Buy when 50 EMA crosses above 200 EMA.
+            * **Bollinger Bands:** Good for Ranging. Buy when price hits lower band.
+            * **Stochastic:** Good for Scalping. Buy when momentum crosses up in oversold zone.
+            * **EMA Trend + Price Action:** Best of both. Trades with the trend ONLY when a Pin Bar/Engulfing candle confirms.
             """
         )
     
+    # === SIDEBAR LOGO (FIXED SIZE) ===
     show_sidebar_logo()
     
     user_id = st.session_state.user['localId']
@@ -359,19 +372,59 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Strategy Selection")
-    strategy_name = st.sidebar.selectbox("Choose a Strategy", ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone"], key="strategy_name")
+    
+    # === STRATEGY LIST ===
+    strategies_list = [
+        "RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", 
+        "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone",
+        "EMA Golden Cross", "Bollinger Bands Bounce", "Stochastic Oscillator", "EMA Trend + Price Action"
+    ]
+    strategy_name = st.sidebar.selectbox("Choose a Strategy", strategies_list, key="strategy_name")
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Indicator Configuration")
     
-    rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
-    sma_period = st.sidebar.slider("SMA Period", 10, 50, 20, key='sma_period')
-    alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
-    alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 65, key='rsi_high')
-    if alert_rsi_low >= alert_rsi_high: st.sidebar.error("RSI Buy threshold must be lower than Sell."); st.stop()
-    macd_fast = st.sidebar.slider("MACD Fast Period", 1, 26, 12, key='macd_fast')
-    macd_slow = st.sidebar.slider("MACD Slow Period", 13, 50, 26, key='macd_slow')
-    macd_signal = st.sidebar.slider("MACD Signal Period", 1, 15, 9, key='macd_signal')
+    # Dynamic Sliders based on Strategy
+    rsi_period = 14
+    sma_period = 20
+    macd_fast = 12
+    macd_slow = 26
+    macd_signal = 9
+    
+    # Common inputs
+    if "RSI" in strategy_name:
+        rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
+        alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
+        alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 65, key='rsi_high')
+    else:
+        alert_rsi_low, alert_rsi_high = 35, 65
+        
+    if "MACD" in strategy_name:
+        st.sidebar.markdown("**MACD Settings**")
+        macd_fast = st.sidebar.slider("Fast", 1, 26, 12, key='macd_fast')
+        macd_slow = st.sidebar.slider("Slow", 13, 50, 26, key='macd_slow')
+        macd_signal = st.sidebar.slider("Signal", 1, 15, 9, key='macd_signal')
+        
+    if "EMA" in strategy_name:
+        st.sidebar.markdown("**EMA Settings**")
+        ema_short = st.sidebar.slider("Fast EMA", 10, 100, 50, key='ema_short')
+        ema_long = st.sidebar.slider("Slow EMA", 100, 300, 200, key='ema_long')
+    else:
+        ema_short, ema_long = 50, 200
+        
+    if "Bollinger" in strategy_name:
+        st.sidebar.markdown("**BB Settings**")
+        bb_period = st.sidebar.slider("Period", 10, 50, 20, key='bb_period')
+        bb_std = st.sidebar.slider("Std Dev", 1.0, 3.0, 2.0, key='bb_std')
+    else:
+        bb_period, bb_std = 20, 2.0
+        
+    if "Stochastic" in strategy_name:
+        st.sidebar.markdown("**Stochastic Settings**")
+        stoch_k = st.sidebar.slider("%K", 5, 30, 14, key='stoch_k')
+        stoch_d = st.sidebar.slider("%D", 1, 10, 3, key='stoch_d')
+    else:
+        stoch_k, stoch_d = 14, 3
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
@@ -404,6 +457,7 @@ elif st.session_state.page == "app" and st.session_state.user:
             st.rerun()
 
     st.sidebar.markdown("---")
+    
     st.sidebar.subheader("Notification Settings")
     telegram_chat_id = st.sidebar.text_input("Your Telegram Chat ID", 
                                              value=st.session_state.get("telegram_chat_id", ""), 
@@ -423,6 +477,10 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "macd_fast": st.session_state.get("macd_fast", 12),
                 "macd_slow": st.session_state.get("macd_slow", 26),
                 "macd_signal": st.session_state.get("macd_signal", 9),
+                # Add new params
+                "bb_period": bb_period, "bb_std": bb_std,
+                "ema_short": ema_short, "ema_long": ema_long,
+                "stoch_k": stoch_k, "stoch_d": stoch_d,
                 "capital": st.session_state.get("capital", 10000),
                 "risk_pct": st.session_state.get("risk_pct", 1.0), 
                 "sl_pips": st.session_state.get("sl_pips", 50),
@@ -430,6 +488,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 "telegram_chat_id": telegram_chat_id 
             }
             try:
+                # User is allowed to write to "settings" by new rules
                 db.child("users").child(user_id).child("settings").set(settings_to_save, st.session_state.user['idToken'])
                 st.session_state.telegram_chat_id = telegram_chat_id
                 st.sidebar.success("Settings saved successfully!")
@@ -440,7 +499,11 @@ elif st.session_state.page == "app" and st.session_state.user:
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
         if source == "Yahoo":
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
-            yf_sym = f"{symbol.replace('/', '')}=X"
+            # LOGIC FOR GOLD/BTC
+            if "BTC" in symbol: yf_sym = "BTC-USD"
+            elif "XAU" in symbol: yf_sym = "GC=F"
+            else: yf_sym = f"{symbol.replace('/', '')}=X"
+            
             try:
                 df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False, auto_adjust=False)
                 if df.empty: return pd.DataFrame()
@@ -517,13 +580,29 @@ elif st.session_state.page == "app" and st.session_state.user:
             send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price)
 
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
+        # Basic
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
         df['macd_line'], df['macd_signal'], df['macd_hist'] = talib.MACD(df['close'], fastperiod=macd_f, slowperiod=macd_sl, signalperiod=macd_sig)
+        
+        # === NEW INDICATORS ===
+        df['ema_short'] = talib.EMA(df['close'], timeperiod=ema_short)
+        df['ema_long'] = talib.EMA(df['close'], timeperiod=ema_long)
+        
+        df['upper_bb'], df['middle_bb'], df['lower_bb'] = talib.BBANDS(df['close'], timeperiod=bb_period, nbdevup=bb_std, nbdevdn=bb_std)
+        
+        df['slowk'], df['slowd'] = talib.STOCH(df['high'], df['low'], df['close'], fastk_period=stoch_k, slowk_period=stoch_d, slowk_matype=0, slowd_period=stoch_d, slowd_matype=0)
+        
+        df['engulfing'] = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])
+        df['hammer'] = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
+        df['shooting_star'] = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
+        
         return df
 
     def apply_strategy(df, strategy_name, rsi_l, rsi_h):
         df['signal'] = 0
+        
+        # --- ORIGINAL STRATEGIES ---
         if strategy_name == "RSI + SMA Crossover":
             df.loc[(df['rsi'] < rsi_l) & (df['close'] > df['sma']), 'signal'] = 1
             df.loc[(df['rsi'] > rsi_h) & (df['close'] < df['sma']), 'signal'] = -1
@@ -553,6 +632,31 @@ elif st.session_state.page == "app" and st.session_state.user:
             buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
             sell_cond = (df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1))
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
+
+        # --- NEW STRATEGIES ---
+        elif strategy_name == "EMA Golden Cross":
+            buy_cond = (df['ema_short'] > df['ema_long']) & (df['ema_short'].shift(1) <= df['ema_long'].shift(1))
+            sell_cond = (df['ema_short'] < df['ema_long']) & (df['ema_short'].shift(1) >= df['ema_long'].shift(1))
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
+            
+        elif strategy_name == "Bollinger Bands Bounce":
+            df.loc[df['close'] < df['lower_bb'], 'signal'] = 1
+            df.loc[df['close'] > df['upper_bb'], 'signal'] = -1
+            
+        elif strategy_name == "Stochastic Oscillator":
+            buy_cond = (df['slowk'] > df['slowd']) & (df['slowk'].shift(1) <= df['slowd'].shift(1)) & (df['slowk'] < 20)
+            sell_cond = (df['slowk'] < df['slowd']) & (df['slowk'].shift(1) >= df['slowd'].shift(1)) & (df['slowk'] > 80)
+            df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
+            
+        elif strategy_name == "EMA Trend + Price Action":
+            uptrend = df['ema_short'] > df['ema_long']
+            bullish_pattern = (df['engulfing'] == 100) | (df['hammer'] == 100)
+            df.loc[uptrend & bullish_pattern, 'signal'] = 1
+            
+            downtrend = df['ema_short'] < df['ema_long']
+            bearish_pattern = (df['engulfing'] == -100) | (df['shooting_star'] == -100) 
+            df.loc[downtrend & bearish_pattern, 'signal'] = -1
+
         return df
 
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
@@ -608,7 +712,9 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.subheader(f"**{selected_pair}** – **{selected_interval}**")
     
     def show_advanced_chart(symbol):
-        tv_symbol = f"FX:{symbol.replace('/', '')}"
+        if "BTC" in symbol: tv_symbol = "COINBASE:BTCUSD"
+        elif "XAU" in symbol: tv_symbol = "OANDA:XAUUSD"
+        else: tv_symbol = f"FX:{symbol.replace('/', '')}"
         
         html_code = f"""
         <div class="tradingview-widget-container">
@@ -698,7 +804,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
-    # === NEW: NATIVE ECONOMIC CALENDAR (STYLED) ===
+    # === NATIVE ECONOMIC CALENDAR (STYLED) ===
     st.markdown("---")
     st.subheader("📅 Economic Calendar (This Week)")
     
@@ -706,7 +812,6 @@ elif st.session_state.page == "app" and st.session_state.user:
         calendar_html = """<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{ "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }</script></div>"""
         components.html(calendar_html, height=520, scrolling=True)
 
-    # === FIX: CACHE TIME REDUCED TO 300 SECONDS (5 MINS) ===
     @st.cache_data(ttl=300) 
     def get_native_calendar():
         try:
@@ -749,7 +854,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             hide_index=True,
             width=1000
         )
-        # === BUTTON TO FORCE REFRESH ===
         if st.button("Refresh Calendar"): st.cache_data.clear(); st.rerun()
     else:
         show_backup_widget()
@@ -766,7 +870,11 @@ elif st.session_state.page == "app" and st.session_state.user:
                 </p>
         """, unsafe_allow_html=True)
 
-        all_strategies = ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone"]
+        all_strategies = [
+            "RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", 
+            "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone",
+            "EMA Golden Cross", "Bollinger Bands Bounce", "Stochastic Oscillator", "EMA Trend + Price Action"
+        ]
         col_scan1, col_scan2, col_scan3 = st.columns(3)
         with col_scan1: scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=[])
         with col_scan2: scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=[])
@@ -786,7 +894,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                 for pair in scan_pairs:
                     for interval_key in scan_intervals:
                         interval_val = INTERVALS[interval_key]
-                        # USE YAHOO FOR SCANNER (UNLIMITED)
                         data = fetch_data(pair, interval_val, source="Yahoo") 
                         if data.empty: total_jobs -= len(scan_strategies); continue
                         for strategy in scan_strategies:
@@ -803,17 +910,12 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if scan_results:
                         st.subheader("Scan Results Overview")
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
-                        
-                        # === STYLING FUNCTIONS ===
                         def style_win_rate(val):
                             color = '#26a69a' if val >= 50 else '#ef5350' 
                             return f'background-color: {color}; color: white; font-weight: bold;'
-                        
                         def style_profit(val):
                             color = '#26a69a' if val > 0 else '#ef5350'
                             return f'color: {color}; font-weight: bold;'
-
-                        # Apply Styles
                         st.dataframe(
                             results_df.style
                             .map(style_win_rate, subset=['Win Rate (%)'])
@@ -839,7 +941,7 @@ elif st.session_state.page == "app" and st.session_state.user:
              st.session_state.page = "profile"
              st.rerun()
 
-    # === RISK DISCLAIMER (RESTORED) ===
+    # === RISK DISCLAIMER ===
     st.markdown("---"); st.subheader("⚠️ Risk Disclaimer")
     st.warning(
         """
@@ -854,10 +956,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
-    # === AUTO-REFRESH ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
-    # === ALERT HISTORY SECTION (SIDEBAR BOTTOM - RESTORED) ===
+    # === ALERT HISTORY SECTION ===
     st.sidebar.markdown("---")
     st.sidebar.subheader("Alert History")
 
@@ -885,7 +986,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                         bars_to_fetch = int(time_diff_seconds / interval_seconds) + 2
                         if bars_to_fetch < 2: continue
                         
-                        # USE YAHOO FOR OUTCOME CHECK (UNLIMITED)
                         df_new = fetch_data(alert['pair'], selected_interval, source="Yahoo", output_size=bars_to_fetch)
                         if df_new.empty: continue
                         
@@ -910,7 +1010,6 @@ elif st.session_state.page == "app" and st.session_state.user:
                         if new_status != "RUNNING":
                             updated_count += 1
                             alert['status'] = new_status
-                            # User is allowed to write to "alerts"
                             db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": new_status}, st.session_state.user['idToken'])
                     except Exception as e: print(f"Error: {e}")
             if updated_count > 0: st.sidebar.success(f"Updated {updated_count} alert(s)!"); st.cache_data.clear()
@@ -935,7 +1034,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     else:
         st.sidebar.info("No alerts found yet.")
 
-    # === NEW LOCATION: PROFILE & LOGOUT (AT THE VERY BOTTOM) ===
     st.sidebar.markdown("---")
     if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button_bottom"):
         st.session_state.page = "profile"
