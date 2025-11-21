@@ -71,13 +71,12 @@ if 'user' not in st.session_state: st.session_state.user = None
 if 'is_premium' not in st.session_state: st.session_state.is_premium = False
 if 'page' not in st.session_state: st.session_state.page = "login" 
 
-# === HELPER: LOGO LOADER (FIXED SIZE) ===
+# === HELPER: LOGO LOADER ===
 def get_page_icon():
     return "logo.png" if os.path.exists("logo.png") else "🧙‍♂️"
 
 def show_sidebar_logo():
     if os.path.exists("logo.png"):
-        # FIX: Set width to 150px so it isn't huge
         st.sidebar.image("logo.png", width=150) 
     else:
         st.sidebar.title("PipWizard 🧙‍♂️")
@@ -94,7 +93,7 @@ def sign_up(email, password):
             ref = admin_db.reference(f"users/{user['localId']}")
             ref.set({"email": email, "subscription_status": "free"})
         except Exception as admin_e:
-            # Fallback (Only works if rules are loose, but good safety net)
+            # Fallback
             st.warning(f"Admin profile creation failed: {admin_e}. Trying client...")
             db.child("users").child(user['localId']).set({"email": email, "subscription_status": "free"}, user['idToken'])
 
@@ -112,7 +111,6 @@ def login(email, password):
         st.session_state.user = user
         
         # 2. Fetch Profile with ADMIN SDK (Bypasses Security Rules)
-        # This is the "Bulletproof" fix. Even if rules block reading, Admin can read.
         user_data = None
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
@@ -233,9 +231,8 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
-        # === FIX: LOGO SIZE & WELCOME TEXT ===
         if os.path.exists("logo.png"):
-            st.image("logo.png", width=120) # Fixed width
+            st.image("logo.png", width=120)
         else:
             st.title("PipWizard 🧙‍♂️")
             
@@ -255,7 +252,6 @@ if st.session_state.page == "login":
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
-    # Profile Logo
     if os.path.exists("logo.png"): st.image("logo.png", width=100)
     st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
@@ -302,6 +298,10 @@ elif st.session_state.page == "app" and st.session_state.user:
             padding-bottom: 1rem !important;
             max-width: 100% !important;
         }}
+        
+        /* === FIX: CURSOR FOR DROPDOWNS === */
+        div[data-baseweb="select"] > div {{ cursor: pointer !important; }}
+        div[data-baseweb="select"] > div > div {{ cursor: pointer !important; }}
 
         .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'} !important; }}
         div.stButton > button:first-child {{ background-color: #007bff !important; color: white !important; border: none; }}
@@ -347,7 +347,6 @@ elif st.session_state.page == "app" and st.session_state.user:
             """
         )
     
-    # === SIDEBAR LOGO (FIXED SIZE) ===
     show_sidebar_logo()
     
     user_id = st.session_state.user['localId']
@@ -373,7 +372,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Strategy Selection")
     
-    # === STRATEGY LIST ===
     strategies_list = [
         "RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", 
         "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone",
@@ -384,14 +382,18 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Indicator Configuration")
     
-    # Dynamic Sliders based on Strategy
     rsi_period = 14
     sma_period = 20
     macd_fast = 12
     macd_slow = 26
     macd_signal = 9
+    ema_short = 50
+    ema_long = 200
+    bb_period = 20
+    bb_std = 2.0
+    stoch_k = 14
+    stoch_d = 3
     
-    # Common inputs
     if "RSI" in strategy_name:
         rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
         alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
@@ -409,22 +411,16 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.sidebar.markdown("**EMA Settings**")
         ema_short = st.sidebar.slider("Fast EMA", 10, 100, 50, key='ema_short')
         ema_long = st.sidebar.slider("Slow EMA", 100, 300, 200, key='ema_long')
-    else:
-        ema_short, ema_long = 50, 200
         
     if "Bollinger" in strategy_name:
         st.sidebar.markdown("**BB Settings**")
         bb_period = st.sidebar.slider("Period", 10, 50, 20, key='bb_period')
         bb_std = st.sidebar.slider("Std Dev", 1.0, 3.0, 2.0, key='bb_std')
-    else:
-        bb_period, bb_std = 20, 2.0
         
     if "Stochastic" in strategy_name:
         st.sidebar.markdown("**Stochastic Settings**")
         stoch_k = st.sidebar.slider("%K", 5, 30, 14, key='stoch_k')
         stoch_d = st.sidebar.slider("%D", 1, 10, 3, key='stoch_d')
-    else:
-        stoch_k, stoch_d = 14, 3
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
@@ -712,10 +708,12 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.subheader(f"**{selected_pair}** – **{selected_interval}**")
     
     def show_advanced_chart(symbol):
+        # Map format "EUR/USD" -> "FX:EURUSD" for TradingView
         if "BTC" in symbol: tv_symbol = "COINBASE:BTCUSD"
         elif "XAU" in symbol: tv_symbol = "OANDA:XAUUSD"
         else: tv_symbol = f"FX:{symbol.replace('/', '')}"
         
+        # Advanced Real-Time Chart Widget with RSI and MACD
         html_code = f"""
         <div class="tradingview-widget-container">
           <div id="tradingview_advanced_chart"></div>
@@ -745,9 +743,13 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
         components.html(html_code, height=620)
 
+    # Display the Advanced Widget
     show_advanced_chart(selected_pair)
     
+    # We still need to fetch data internally to check for signals (Alert System)
+    # This "invisible" fetch keeps your "Live Alerts" working in the background.
     with st.spinner(f"Analyzing market data for alerts..."):
+         # Use Yahoo for this check (fast, no API limit)
          df_analysis = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
          if not df_analysis.empty:
              df_ind = calculate_indicators(df_analysis, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
@@ -757,6 +759,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     # === BACKTEST SECTION ===
     if run_backtest_button:
         with st.spinner("Running backtest on real market data..."):
+            # USE YAHOO FOR BACKTEST (UNLIMITED)
             df_backtest_data = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
             if not df_backtest_data.empty:
                 df_bt_ind = calculate_indicators(df_backtest_data, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
@@ -797,6 +800,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         
         st.subheader("Detailed Trade Log")
         trade_df_display = results['trade_df'].copy()
+        # Clean Headers
         trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
         st.dataframe(trade_df_display, width=1000) 
         
@@ -804,59 +808,29 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.markdown("---")
         st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
 
-    # === NATIVE ECONOMIC CALENDAR (STYLED) ===
+    # === NEW: NATIVE ECONOMIC CALENDAR (STYLED) ===
     st.markdown("---")
-    st.subheader("📅 Economic Calendar (This Week)")
+    st.subheader("📅 Economic Calendar (Live Updates)")
     
-    def show_backup_widget():
-        calendar_html = """<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{ "width": "100%", "height": "500", "colorTheme": "dark", "isTransparent": true, "locale": "en", "importanceFilter": "-1,0,1", "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD" }</script></div>"""
-        components.html(calendar_html, height=520, scrolling=True)
-
-    @st.cache_data(ttl=300) 
-    def get_native_calendar():
-        try:
-            url = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code != 200: return None
-            root = ET.fromstring(response.content)
-            data = []
-            for event in root.findall('event'):
-                country = event.find('country').text
-                if country not in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]: continue 
-                data.append({
-                    "Currency": country,
-                    "Event": event.find('title').text,
-                    "Impact": event.find('impact').text,
-                    "Date": event.find('date').text,
-                    "Time": event.find('time').text,
-                    "Forecast": event.find('forecast').text if event.find('forecast') is not None else "",
-                    "Previous": event.find('previous').text if event.find('previous') is not None else "",
-                    "Actual": event.find('actual').text if event.find('actual') is not None else ""
-                })
-            return pd.DataFrame(data) if data else None
-        except Exception: return None
-
-    df_cal = get_native_calendar()
-    
-    if df_cal is not None and not df_cal.empty:
-        def highlight_impact(val):
-            if val == 'High': return 'background-color: #ff4b4b; color: white; font-weight: bold;'
-            elif val == 'Medium': return 'background-color: #ffa726; color: black; font-weight: bold;'
-            elif val == 'Low': return 'background-color: #fff59d; color: black;'
-            return ''
-        
-        st.dataframe(
-            df_cal.style.map(highlight_impact, subset=['Impact']),
-            column_config={
-                "Actual": st.column_config.TextColumn("Actual", help="Released Value"),
-            },
-            hide_index=True,
-            width=1000
-        )
-        if st.button("Refresh Calendar"): st.cache_data.clear(); st.rerun()
-    else:
-        show_backup_widget()
+    # We use the widget because it is the ONLY free source that updates "Actual" instantly.
+    # The XML/Python table method is too slow for real trading.
+    calendar_html = """
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+      {
+      "width": "100%",
+      "height": "500",
+      "colorTheme": "dark",
+      "isTransparent": false,
+      "locale": "en",
+      "importanceFilter": "-1,0,1",
+      "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD"
+    }
+      </script>
+    </div>
+    """
+    components.html(calendar_html, height=520, scrolling=True)
 
     # === STRATEGY SCANNER (PREMIUM) ===
     if is_premium:
@@ -870,11 +844,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 </p>
         """, unsafe_allow_html=True)
 
-        all_strategies = [
-            "RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", 
-            "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone",
-            "EMA Golden Cross", "Bollinger Bands Bounce", "Stochastic Oscillator", "EMA Trend + Price Action"
-        ]
+        all_strategies = ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone", "EMA Golden Cross", "Bollinger Bands Bounce", "Stochastic Oscillator", "EMA Trend + Price Action"]
         col_scan1, col_scan2, col_scan3 = st.columns(3)
         with col_scan1: scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=[])
         with col_scan2: scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=[])
@@ -894,6 +864,7 @@ elif st.session_state.page == "app" and st.session_state.user:
                 for pair in scan_pairs:
                     for interval_key in scan_intervals:
                         interval_val = INTERVALS[interval_key]
+                        # USE YAHOO FOR SCANNER (UNLIMITED)
                         data = fetch_data(pair, interval_val, source="Yahoo") 
                         if data.empty: total_jobs -= len(scan_strategies); continue
                         for strategy in scan_strategies:
@@ -910,12 +881,17 @@ elif st.session_state.page == "app" and st.session_state.user:
                     if scan_results:
                         st.subheader("Scan Results Overview")
                         results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
+                        
+                        # === STYLING FUNCTIONS ===
                         def style_win_rate(val):
                             color = '#26a69a' if val >= 50 else '#ef5350' 
                             return f'background-color: {color}; color: white; font-weight: bold;'
+                        
                         def style_profit(val):
                             color = '#26a69a' if val > 0 else '#ef5350'
                             return f'color: {color}; font-weight: bold;'
+
+                        # Apply Styles
                         st.dataframe(
                             results_df.style
                             .map(style_win_rate, subset=['Win Rate (%)'])
@@ -956,6 +932,7 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
+    # === AUTO-REFRESH ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
     # === ALERT HISTORY SECTION ===
