@@ -231,8 +231,9 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
+        # === FIX: LOGO SIZE & WELCOME TEXT ===
         if os.path.exists("logo.png"):
-            st.image("logo.png", width=120)
+            st.image("logo.png", width=120) # Fixed width
         else:
             st.title("PipWizard 🧙‍♂️")
             
@@ -252,6 +253,7 @@ if st.session_state.page == "login":
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
+    # Profile Logo
     if os.path.exists("logo.png"): st.image("logo.png", width=100)
     st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
@@ -326,24 +328,59 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
+    # === COMPLETE ABOUT SECTION ===
     with st.expander("📖 User Guide & Telegram Setup"):
         st.markdown(
             """
             ### What is PipWizard?
-            PipWizard is a tool to help you **test trading strategies** before you use them. 
+            PipWizard is a tool to help you **test trading strategies** before you use them. It is not a "get rich quick" bot. It is a decision-support tool.
             
             ### 📲 How to Setup Telegram Alerts (New!)
-            1.  Search Telegram for **@userinfobot** -> Click "Start" -> Copy your **ID**.
-            2.  Paste it in the sidebar below and click **"Save Settings"**.
+            1.  Search Telegram for **@userinfobot** -> Click "Start" -> Copy your **ID** (e.g., 12345678).
+            2.  Paste it in the **Sidebar** below and click **"Save Settings"**.
             3.  *You must also start a chat with our bot so it has permission to message you.*
 
             ---
+
+            ### 📊 Strategy Glossary (How they work)
             
-            ### Strategy Guide
-            * **EMA Golden Cross:** Good for Trends. Buy when 50 EMA crosses above 200 EMA.
-            * **Bollinger Bands:** Good for Ranging. Buy when price hits lower band.
-            * **Stochastic:** Good for Scalping. Buy when momentum crosses up in oversold zone.
-            * **EMA Trend + Price Action:** Best of both. Trades with the trend ONLY when a Pin Bar/Engulfing candle confirms.
+            **1. Trend Following Strategies 🐢**
+            * **EMA Golden Cross:** Buys when the fast 50-EMA crosses above the slow 200-EMA. Best for long trends.
+            * **SMA Crossover:** Similar to EMA but uses simple averages.
+            * **MACD Crossover:** Buys when the MACD line crosses the Signal line.
+
+            **2. Mean Reversion Strategies 🪀**
+            * **Bollinger Bands Bounce:** Buys when price hits the Lower Band (cheap). Sells when price hits Upper Band. Best for sideways markets.
+            * **RSI Standalone:** Buys when RSI < 30. Sells when RSI > 70.
+
+            **3. Momentum & Scalping 🐇**
+            * **Stochastic Oscillator:** Buys when momentum turns up from the bottom zone (<20). Faster than RSI.
+            * **RSI + MACD Confluence:** Only trades when **BOTH** RSI and MACD agree.
+
+            **4. Pro Strategies 🕯️**
+            * **EMA Trend + Price Action:** The smartest strategy. It waits for an Uptrend (EMAs) **AND** a specific candle pattern (Pin Bar or Engulfing) before entering.
+
+            ---
+            
+            ### 🚀 Tour of the App
+            * **The Sidebar:** Controls for Pair, Timeframe, Strategy, and Alerts.
+            * **The Main Chart:** Professional live TradingView feed.
+            * **The Backtester:** Click "Run Backtest" to prove your strategy works.
+            * **The Scanner:** (Premium) Automatically finds profitable trades.
+            * **Economic Calendar:** Shows upcoming high-impact news.
+
+            ---
+            
+            ### Feature Comparison
+            
+            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
+            | :--- | :--- | :--- |
+            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
+            | **Live Charting** | ✅ Yes | ✅ Yes |
+            | **EUR/USD Alerts** | ✅ Yes | ✅ Yes |
+            | **All Pair Alerts** | 🔒 No | ✅ **Yes** |
+            | **Gold & Bitcoin** | 🔒 No | ✅ **Yes** |
+            | **Strategy Scanner**| 🔒 No | ✅ **Yes** |
             """
         )
     
@@ -372,6 +409,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Strategy Selection")
     
+    # === STRATEGY LIST ===
     strategies_list = [
         "RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", 
         "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone",
@@ -382,6 +420,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Indicator Configuration")
     
+    # Dynamic Sliders based on Strategy
     rsi_period = 14
     sma_period = 20
     macd_fast = 12
@@ -394,6 +433,7 @@ elif st.session_state.page == "app" and st.session_state.user:
     stoch_k = 14
     stoch_d = 3
     
+    # Common inputs
     if "RSI" in strategy_name:
         rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
         alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
@@ -411,16 +451,22 @@ elif st.session_state.page == "app" and st.session_state.user:
         st.sidebar.markdown("**EMA Settings**")
         ema_short = st.sidebar.slider("Fast EMA", 10, 100, 50, key='ema_short')
         ema_long = st.sidebar.slider("Slow EMA", 100, 300, 200, key='ema_long')
+    else:
+        ema_short, ema_long = 50, 200
         
     if "Bollinger" in strategy_name:
         st.sidebar.markdown("**BB Settings**")
         bb_period = st.sidebar.slider("Period", 10, 50, 20, key='bb_period')
         bb_std = st.sidebar.slider("Std Dev", 1.0, 3.0, 2.0, key='bb_std')
+    else:
+        bb_period, bb_std = 20, 2.0
         
     if "Stochastic" in strategy_name:
         st.sidebar.markdown("**Stochastic Settings**")
         stoch_k = st.sidebar.slider("%K", 5, 30, 14, key='stoch_k')
         stoch_d = st.sidebar.slider("%D", 1, 10, 3, key='stoch_d')
+    else:
+        stoch_k, stoch_d = 14, 3
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
@@ -932,10 +978,9 @@ elif st.session_state.page == "app" and st.session_state.user:
         """
     )
 
-    # === AUTO-REFRESH ===
     components.html("<meta http-equiv='refresh' content='61'>", height=0)
 
-    # === ALERT HISTORY SECTION ===
+    # === ALERT HISTORY SECTION (SIDEBAR BOTTOM) ===
     st.sidebar.markdown("---")
     st.sidebar.subheader("Alert History")
 
