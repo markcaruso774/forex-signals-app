@@ -18,9 +18,8 @@ import xml.etree.ElementTree as ET
 from lightweight_charts.widgets import StreamlitChart
 import os
 
-# === 1. FIREBASE CONFIGURATION (Client & Admin) ===
+# === 1. FIREBASE CONFIGURATION ===
 def initialize_firebase():
-    # A. Initialize Client SDK (Pyrebase) - For Login/Signup
     try:
         if "FIREBASE_CONFIG" not in st.secrets:
             st.error("Secrets: FIREBASE_CONFIG missing.")
@@ -41,26 +40,20 @@ def initialize_firebase():
         st.error(f"Client Firebase Error: {e}")
         return None, None
 
-    # B. Initialize Admin SDK (Firebase-Admin) - For Secure Upgrades & Logins
     try:
         if not firebase_admin._apps:
             if "FIREBASE_ADMIN" in st.secrets:
                 cred_dict = dict(st.secrets["FIREBASE_ADMIN"])
-                # Fix private key formatting
                 if "private_key" in cred_dict:
                     cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 
-                # Use DB URL from client config
                 db_url = config.get("databaseURL")
-                
                 cred = credentials.Certificate(cred_dict)
-                firebase_admin.initialize_app(cred, {
-                    "databaseURL": db_url
-                })
+                firebase_admin.initialize_app(cred, {"databaseURL": db_url})
             else:
-                st.warning("Secrets: FIREBASE_ADMIN missing. Upgrades may fail.")
+                st.warning("Secrets: FIREBASE_ADMIN missing.")
     except Exception as e:
-        st.warning(f"Admin Firebase Init Warning: {e}")
+        st.warning(f"Admin Init Warning: {e}")
 
     return auth, db
 
@@ -81,22 +74,17 @@ def show_sidebar_logo():
     else:
         st.sidebar.title("PipWizard 🧙‍♂️")
 
-# === 3. AUTH FUNCTIONS (ROBUST) ===
+# === 3. AUTH FUNCTIONS ===
 def sign_up(email, password):
     if auth is None: return
     try:
         user = auth.create_user_with_email_and_password(email, password)
         st.session_state.user = user
-        
-        # Use ADMIN SDK to create initial profile (Bypasses "Write: False" rule)
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             ref.set({"email": email, "subscription_status": "free"})
-        except Exception as admin_e:
-            # Fallback
-            st.warning(f"Admin profile creation failed: {admin_e}. Trying client...")
+        except:
             db.child("users").child(user['localId']).set({"email": email, "subscription_status": "free"}, user['idToken'])
-
         st.session_state.is_premium = False
         st.session_state.page = "app"
         st.rerun()
@@ -106,29 +94,21 @@ def sign_up(email, password):
 def login(email, password):
     if auth is None: return
     try:
-        # 1. Authenticate User
         user = auth.sign_in_with_email_and_password(email, password)
         st.session_state.user = user
-        
-        # 2. Fetch Profile with ADMIN SDK (Bypasses Security Rules)
         user_data = None
         try:
             ref = admin_db.reference(f"users/{user['localId']}")
             user_data = ref.get()
         except:
-            # Fallback to Client SDK
             user_data = db.child("users").child(user['localId']).get(user['idToken']).val()
         
         if user_data:
             st.session_state.is_premium = (user_data.get("subscription_status") == "premium")
-            
-            # Load Settings
             settings = user_data.get("settings", {}) 
             st.session_state.selected_pair = settings.get("selected_pair", "EUR/USD")
             st.session_state.selected_interval = settings.get("selected_interval", "1h")
             st.session_state.strategy_name = settings.get("strategy_name", "RSI + SMA Crossover")
-            
-            # === LOAD INDICATOR SETTINGS ===
             st.session_state.rsi_period = settings.get("rsi_period", 14)
             st.session_state.sma_period = settings.get("sma_period", 20)
             st.session_state.alert_rsi_low = settings.get("alert_rsi_low", 35)
@@ -136,21 +116,12 @@ def login(email, password):
             st.session_state.macd_fast = settings.get("macd_fast", 12)
             st.session_state.macd_slow = settings.get("macd_slow", 26)
             st.session_state.macd_signal = settings.get("macd_signal", 9)
-            # New Strategy Settings
-            st.session_state.bb_period = settings.get("bb_period", 20)
-            st.session_state.bb_std = settings.get("bb_std", 2.0)
-            st.session_state.ema_short = settings.get("ema_short", 50)
-            st.session_state.ema_long = settings.get("ema_long", 200)
-            st.session_state.stoch_k = settings.get("stoch_k", 14)
-            st.session_state.stoch_d = settings.get("stoch_d", 3)
-            
             st.session_state.capital = settings.get("capital", 10000)
             st.session_state.risk_pct = settings.get("risk_pct", 1.0)
             st.session_state.sl_pips = settings.get("sl_pips", 50)
             st.session_state.tp_pips = settings.get("tp_pips", 100)
             st.session_state.telegram_chat_id = settings.get("telegram_chat_id", "")
         else:
-            # Profile missing? Re-create it safely.
             try:
                 ref = admin_db.reference(f"users/{user['localId']}")
                 ref.set({"email": email, "subscription_status": "free"})
@@ -211,7 +182,6 @@ def verify_payment(reference):
         if res.get("status") and res["data"]["status"] == "success":
             uid = res["data"]["metadata"].get("user_id")
             if uid:
-                # Secure Update via Admin SDK
                 try:
                     ref = admin_db.reference(f"users/{uid}")
                     ref.update({"subscription_status": "premium"})
@@ -231,15 +201,10 @@ if st.session_state.page == "login":
     st.set_page_config(page_title="Login - PipWizard", page_icon=get_page_icon(), layout="centered")
     if auth is None or db is None: st.error("App failed to start.")
     else:
-        # === FIX: LOGO SIZE & WELCOME TEXT ===
-        if os.path.exists("logo.png"):
-            st.image("logo.png", width=120) # Fixed width
-        else:
-            st.title("PipWizard 🧙‍♂️")
-            
+        if os.path.exists("logo.png"): st.image("logo.png", width=120)
+        else: st.title("PipWizard 🧙‍♂️")
         st.markdown("### 👋 Welcome to PipWizard!")
         st.markdown("#### Live Forex Signals & Strategy Tester")
-        
         if "trxref" in st.query_params: st.info("✅ **Payment Detected!** Log in to activate.")
         else: st.text("Please log in or sign up to continue.")
         action = st.radio("Action:", ("Login", "Sign Up"), horizontal=True, index=0)
@@ -253,11 +218,9 @@ if st.session_state.page == "login":
 # === 6. PROFILE PAGE ===
 elif st.session_state.page == "profile":
     st.set_page_config(page_title="Profile", page_icon=get_page_icon(), layout="centered")
-    # Profile Logo
     if os.path.exists("logo.png"): st.image("logo.png", width=100)
     st.title("Profile")
     st.write(f"User: `{st.session_state.user['email']}`")
-    
     if st.session_state.is_premium:
         st.success("You are a **Premium User**! 🌟")
     else:
@@ -270,7 +233,6 @@ elif st.session_state.page == "profile":
                     st.success(f"Exchange Rate Applied. Charge: **₦{amt:,.2f}**")
                     st.markdown(f'[**Click Here to Pay**]({url})', unsafe_allow_html=True)
                     components.html(f'<meta http-equiv="refresh" content="2; url={url}">', height=0)
-
     st.markdown("---")
     if st.button("Back to App"): st.session_state.page = "app"; st.rerun()
     if st.button("Logout", type="secondary"): logout()
@@ -293,30 +255,25 @@ elif st.session_state.page == "app" and st.session_state.user:
     st.markdown(f"""<style>
         .stApp {{ background-color: {'#0e1117' if st.session_state.theme == 'dark' else '#ffffff'}; color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'}; }}
         section[data-testid="stSidebar"] {{ background-color: {'#0e1117' if st.session_state.theme == 'dark' else '#f0f2f6'}; }}
-        
-        /* === LAYOUT FIX: REMOVE TOP PADDING === */
-        .block-container {{
-            padding-top: 1rem !important;
-            padding-bottom: 1rem !important;
-            max-width: 100% !important;
-        }}
-        
-        /* === FIX: CURSOR FOR DROPDOWNS === */
+        .block-container {{ padding-top: 1rem !important; padding-bottom: 1rem !important; max-width: 100% !important; }}
         div[data-baseweb="select"] > div {{ cursor: pointer !important; }}
         div[data-baseweb="select"] > div > div {{ cursor: pointer !important; }}
-
         .stMarkdown, .stText, p, h1, h2, h3, span, label {{ color: {'#f0f0f0' if st.session_state.theme == 'dark' else '#000000'} !important; }}
         div.stButton > button:first-child {{ background-color: #007bff !important; color: white !important; border: none; }}
         div[data-testid="stTextInput"] input {{ background-color: #ffffff !important; color: #000000 !important; }}
-        .buy-signal {{ color: #26a69a; }} .sell-signal {{ color: #ef5350; }}
-        .alert-history-table {{ width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85em; }}
-        .alert-history-table th, .alert-history-table td {{ padding: 4px 2px; text-align: left; border-bottom: 1px solid #444; color: #f0f0f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-        .alert-history-table th {{ font-weight: bold; color: #eee; }}
-        .alert-status-RUNNING {{ color: #ff9800; font-weight: bold; }}
-        .alert-status-PROFIT {{ color: #26a69a; font-weight: bold; }}
-        .alert-status-LOSS {{ color: #ef5350; font-weight: bold; }}
-        div[data-testid="stMetric"] > label {{ color: #f0f0f0; font-weight: bold; }}
-        div[data-testid="stVerticalBlock"] div[data-testid="stMarkdownContainer"] p {{ color: #f0f0f0; }}
+        
+        /* CARD STYLE FOR ALERTS */
+        .alert-card {{
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 8px;
+            background-color: #1a1a1a;
+        }}
+        .alert-header {{ font-weight: bold; display: flex; justify-content: space-between; }}
+        .alert-win {{ color: #26a69a; font-weight: bold; float: right; }}
+        .alert-loss {{ color: #ef5350; font-weight: bold; float: right; }}
+        .alert-details {{ font-size: 0.85em; color: #ccc; margin-top: 4px; }}
     </style>""", unsafe_allow_html=True)
 
     col1, col2 = st.columns([6, 1])
@@ -328,78 +285,27 @@ elif st.session_state.page == "app" and st.session_state.user:
         if st.button(theme_label, key="theme_toggle", on_click=toggle_theme):
             st.rerun()
 
-    # === COMPLETE ABOUT SECTION ===
     with st.expander("📖 User Guide & Telegram Setup"):
         st.markdown(
             """
             ### What is PipWizard?
-            PipWizard is a tool to help you **test trading strategies** before you use them. It is not a "get rich quick" bot. It is a decision-support tool.
+            PipWizard is a tool to help you **test trading strategies**...
             
             ### 📲 How to Setup Telegram Alerts (New!)
-            1.  Search Telegram for **@userinfobot** -> Click "Start" -> Copy your **ID** (e.g., 12345678).
-            2.  Paste it in the **Sidebar** below and click **"Save Settings"**.
-            3.  *You must also start a chat with our bot so it has permission to message you.*
-
-            ---
-
-            ### 📊 Strategy Glossary (How they work)
-            
-            **1. Trend Following Strategies 🐢**
-            * **EMA Golden Cross:** Buys when the fast 50-EMA crosses above the slow 200-EMA. Best for long trends.
-            * **SMA Crossover:** Similar to EMA but uses simple averages.
-            * **MACD Crossover:** Buys when the MACD line crosses the Signal line.
-
-            **2. Mean Reversion Strategies 🪀**
-            * **Bollinger Bands Bounce:** Buys when price hits the Lower Band (cheap). Sells when price hits Upper Band. Best for sideways markets.
-            * **RSI Standalone:** Buys when RSI < 30. Sells when RSI > 70.
-
-            **3. Momentum & Scalping 🐇**
-            * **Stochastic Oscillator:** Buys when momentum turns up from the bottom zone (<20). Faster than RSI.
-            * **RSI + MACD Confluence:** Only trades when **BOTH** RSI and MACD agree.
-
-            **4. Pro Strategies 🕯️**
-            * **EMA Trend + Price Action:** The smartest strategy. It waits for an Uptrend (EMAs) **AND** a specific candle pattern (Pin Bar or Engulfing) before entering.
-
-            ---
-            
-            ### 🚀 Tour of the App
-            * **The Sidebar:** Controls for Pair, Timeframe, Strategy, and Alerts.
-            * **The Main Chart:** Professional live TradingView feed.
-            * **The Backtester:** Click "Run Backtest" to prove your strategy works.
-            * **The Scanner:** (Premium) Automatically finds profitable trades.
-            * **Economic Calendar:** Shows upcoming high-impact news.
-
-            ---
-            
-            ### Feature Comparison
-            
-            | Feature | 🎁 Free Tier | ⭐ Premium Tier |
-            | :--- | :--- | :--- |
-            | **Backtesting Engine** | ✅ Yes | ✅ Yes |
-            | **Live Charting** | ✅ Yes | ✅ Yes |
-            | **EUR/USD Alerts** | ✅ Yes | ✅ Yes |
-            | **All Pair Alerts** | 🔒 No | ✅ **Yes** |
-            | **Gold & Bitcoin** | 🔒 No | ✅ **Yes** |
-            | **Strategy Scanner**| 🔒 No | ✅ **Yes** |
+            1.  Search Telegram for **@userinfobot** -> Click "Start" -> Copy your **ID**.
+            2.  Paste it in the sidebar below and click **"Save Settings"**.
             """
         )
     
     show_sidebar_logo()
-    
     user_id = st.session_state.user['localId']
     user_email = st.session_state.user.get('email', 'User')
     st.sidebar.write(f"Logged in as: `{user_email}`")
-    
     is_premium = st.session_state.is_premium
 
     if is_premium:
         selected_pair = st.sidebar.selectbox("Select Pair", PREMIUM_PAIRS, index=0, key="selected_pair")
-        st.sidebar.markdown(f"""
-            <div style="background-color: rgba(38, 166, 154, 0.2); border: 1px solid #26a69a; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
-                <p style="color: #26a69a !important; font-weight: bold; margin: 0; text-align: center;">✨ Premium Active</p>
-                <p style="color: #26a69a !important; font-size: 0.8em; margin: 0; text-align: center;">All Features Unlocked</p>
-            </div>
-        """, unsafe_allow_html=True)
+        st.sidebar.markdown(f"""<div style="background-color: rgba(38, 166, 154, 0.2); border: 1px solid #26a69a; padding: 10px; border-radius: 5px; margin-bottom: 20px;"><p style="color: #26a69a !important; font-weight: bold; margin: 0; text-align: center;">✨ Premium Active</p></div>""", unsafe_allow_html=True)
     else:
         selected_pair = FREE_PAIR
         st.sidebar.warning("Free Tier: EUR/USD Only")
@@ -408,8 +314,6 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Strategy Selection")
-    
-    # === STRATEGY LIST ===
     strategies_list = [
         "RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", 
         "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone",
@@ -419,61 +323,41 @@ elif st.session_state.page == "app" and st.session_state.user:
     
     st.sidebar.markdown("---")
     st.sidebar.subheader("Indicator Configuration")
+    # ... (Sliders stay same) ...
+    rsi_period = 14; sma_period = 20; macd_fast = 12; macd_slow = 26; macd_signal = 9; ema_short = 50; ema_long = 200; bb_period = 20; bb_std = 2.0; stoch_k = 14; stoch_d = 3
     
-    # Dynamic Sliders based on Strategy
-    rsi_period = 14
-    sma_period = 20
-    macd_fast = 12
-    macd_slow = 26
-    macd_signal = 9
-    ema_short = 50
-    ema_long = 200
-    bb_period = 20
-    bb_std = 2.0
-    stoch_k = 14
-    stoch_d = 3
-    
-    # Common inputs
     if "RSI" in strategy_name:
         rsi_period = st.sidebar.slider("RSI Period", 5, 30, 14, key='rsi_period')
         alert_rsi_low = st.sidebar.slider("Buy RSI <", 20, 40, 35, key='rsi_low')
         alert_rsi_high = st.sidebar.slider("Sell RSI >", 60, 80, 65, key='rsi_high')
-    else:
-        alert_rsi_low, alert_rsi_high = 35, 65
+    else: alert_rsi_low, alert_rsi_high = 35, 65
         
     if "MACD" in strategy_name:
         st.sidebar.markdown("**MACD Settings**")
         macd_fast = st.sidebar.slider("Fast", 1, 26, 12, key='macd_fast')
         macd_slow = st.sidebar.slider("Slow", 13, 50, 26, key='macd_slow')
         macd_signal = st.sidebar.slider("Signal", 1, 15, 9, key='macd_signal')
-        
+
     if "EMA" in strategy_name:
         st.sidebar.markdown("**EMA Settings**")
         ema_short = st.sidebar.slider("Fast EMA", 10, 100, 50, key='ema_short')
         ema_long = st.sidebar.slider("Slow EMA", 100, 300, 200, key='ema_long')
-    else:
-        ema_short, ema_long = 50, 200
-        
+
     if "Bollinger" in strategy_name:
         st.sidebar.markdown("**BB Settings**")
         bb_period = st.sidebar.slider("Period", 10, 50, 20, key='bb_period')
         bb_std = st.sidebar.slider("Std Dev", 1.0, 3.0, 2.0, key='bb_std')
-    else:
-        bb_period, bb_std = 20, 2.0
-        
+
     if "Stochastic" in strategy_name:
         st.sidebar.markdown("**Stochastic Settings**")
         stoch_k = st.sidebar.slider("%K", 5, 30, 14, key='stoch_k')
         stoch_d = st.sidebar.slider("%D", 1, 10, 3, key='stoch_d')
-    else:
-        stoch_k, stoch_d = 14, 3
-    
+
     st.sidebar.markdown("---")
     st.sidebar.subheader("Backtesting Parameters")
     initial_capital = st.sidebar.number_input("Initial Capital ($)", min_value=100, value=10000, key='capital')
     risk_pct_slider = st.sidebar.slider("Risk Per Trade (%)", 0.5, 5.0, 1.0, key='risk_pct') 
     risk_pct = risk_pct_slider / 100 
-    
     sl_pips = st.sidebar.number_input("Stop Loss (Pips)", min_value=1, max_value=200, value=50, key='sl_pips')
     tp_pips = st.sidebar.number_input("Take Profit (Pips)", min_value=1, max_value=500, value=100, key='tp_pips') 
     
@@ -485,67 +369,30 @@ elif st.session_state.page == "app" and st.session_state.user:
             del st.session_state.backtest_results; st.rerun()
     
     if not is_premium:
-        st.sidebar.markdown("---")
-        st.sidebar.info(
-            """
-            **⭐ Upgrade to Premium ($20.00/mo):**
-            • Unlock all pairs
-            • Unlock Strategy Scanner
-            • Get Live Signal Alerts
-            """
-        )
+        st.sidebar.markdown("---"); st.sidebar.info("**⭐ Upgrade to Premium ($20.00/mo):** Unlock all pairs, Scanner & Alerts.")
         if st.sidebar.button("Upgrade to Premium Now!", type="primary", use_container_width=True, key="upgrade_button"):
-            st.session_state.page = "profile"
-            st.rerun()
+            st.session_state.page = "profile"; st.rerun()
 
     st.sidebar.markdown("---")
-    
     st.sidebar.subheader("Notification Settings")
-    telegram_chat_id = st.sidebar.text_input("Your Telegram Chat ID", 
-                                             value=st.session_state.get("telegram_chat_id", ""), 
-                                             key="telegram_chat_id_input",
-                                             help="Start a chat with @userinfobot on Telegram to get your ID.")
+    telegram_chat_id = st.sidebar.text_input("Your Telegram Chat ID", value=st.session_state.get("telegram_chat_id", ""), key="telegram_chat_id_input")
     
     if st.sidebar.button("Save Telegram ID & Settings", use_container_width=True):
         if st.session_state.user:
-            settings_to_save = {
-                "selected_pair": st.session_state.get("selected_pair", "EUR/USD"),
-                "selected_interval": st.session_state.get("selected_interval", "1h"),
-                "strategy_name": st.session_state.get("strategy_name", "RSI + SMA Crossover"),
-                "rsi_period": st.session_state.get("rsi_period", 14),
-                "sma_period": st.session_state.get("sma_period", 20),
-                "alert_rsi_low": st.session_state.get("alert_rsi_low", 35),
-                "alert_rsi_high": st.session_state.get("alert_rsi_high", 65),
-                "macd_fast": st.session_state.get("macd_fast", 12),
-                "macd_slow": st.session_state.get("macd_slow", 26),
-                "macd_signal": st.session_state.get("macd_signal", 9),
-                # Add new params
-                "bb_period": bb_period, "bb_std": bb_std,
-                "ema_short": ema_short, "ema_long": ema_long,
-                "stoch_k": stoch_k, "stoch_d": stoch_d,
-                "capital": st.session_state.get("capital", 10000),
-                "risk_pct": st.session_state.get("risk_pct", 1.0), 
-                "sl_pips": st.session_state.get("sl_pips", 50),
-                "tp_pips": st.session_state.get("tp_pips", 100),
-                "telegram_chat_id": telegram_chat_id 
-            }
+            settings_to_save = {"telegram_chat_id": telegram_chat_id}
             try:
-                # User is allowed to write to "settings" by new rules
                 db.child("users").child(user_id).child("settings").set(settings_to_save, st.session_state.user['idToken'])
                 st.session_state.telegram_chat_id = telegram_chat_id
-                st.sidebar.success("Settings saved successfully!")
-            except Exception as e:
-                st.sidebar.error(f"Failed to save settings: {e}")
+                st.sidebar.success("Settings saved!")
+            except Exception as e: st.sidebar.error(f"Failed: {e}")
 
     @st.cache_data(ttl=60)
     def fetch_data(symbol, interval, source="TwelveData", output_size=500):
         if source == "Yahoo":
             yf_map = {"1min": "1m", "5min": "5m", "15min": "15m", "30min": "30m", "1h": "1h"}
-            # LOGIC FOR GOLD/BTC
             if "BTC" in symbol: yf_sym = "BTC-USD"
             elif "XAU" in symbol: yf_sym = "GC=F"
             else: yf_sym = f"{symbol.replace('/', '')}=X"
-            
             try:
                 df = yf.download(yf_sym, interval=yf_map.get(interval, "1h"), period="5d", progress=False, auto_adjust=False)
                 if df.empty: return pd.DataFrame()
@@ -554,6 +401,8 @@ elif st.session_state.page == "app" and st.session_state.user:
                 df.rename(columns={'date': 'datetime', 'index': 'datetime'}, inplace=True)
                 df.set_index('datetime', inplace=True)
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+                # === CRITICAL SORTING FIX ===
+                df = df.sort_index()
                 return df[['open', 'high', 'low', 'close']].dropna()
             except: return pd.DataFrame()
         return pd.DataFrame()
@@ -563,24 +412,11 @@ elif st.session_state.page == "app" and st.session_state.user:
         token = st.secrets["TELEGRAM"].get("BOT_TOKEN")
         chat_id = st.session_state.get("telegram_chat_id")
         if not token or not chat_id: return
-
-        emoji = "🟢" if signal_type == "BUY" else "🔴"
-        message = f"""
-🚀 *PipWizard Alert* 🚀
-*Pair:* {pair}
-*Signal:* {signal_type} {emoji}
-*Entry:* `{entry}`
-*TP:* `{tp}`
-*SL:* `{sl}`
-        """
-        url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-        try: requests.post(url, json=payload)
-        except Exception as e: print(f"Telegram Error: {e}")
+        message = f"🚀 *PipWizard Alert*\n*Pair:* {pair}\n*Signal:* {signal_type}\n*Entry:* `{entry}`\n*TP:* `{tp}`\n*SL:* `{sl}`"
+        requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"})
 
     def send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price):
         if db is None or user_id is None: return
-
         alert_id = str(uuid.uuid4())
         alert_data = {
             "id": alert_id, "pair": pair, "type": signal_type,
@@ -592,59 +428,41 @@ elif st.session_state.page == "app" and st.session_state.user:
             db.child("users").child(user_id).child("alerts").child(alert_id).set(alert_data, st.session_state.user['idToken'])
             send_telegram_alert(pair, signal_type, f"{entry_price:.5f}", f"{tp_price:.5f}", f"{sl_price:.5f}")
             st.sidebar.success(f"New {signal_type} Alert on {pair}!")
-        except Exception as e:
-            st.sidebar.error(f"Failed to save alert: {e}")
+        except Exception as e: st.sidebar.error(f"Failed: {e}")
 
     def check_for_live_signal(df, pair, tp_pips, sl_pips):
         if len(df) < 2: return
         latest_bar = df.iloc[-2]
         signal = latest_bar['signal']
-        
-        if 'last_alert_time' not in st.session_state: 
-            st.session_state.last_alert_time = None
-            
+        if 'last_alert_time' not in st.session_state: st.session_state.last_alert_time = None
         if signal != 0 and latest_bar.name != st.session_state.last_alert_time:
             st.session_state.last_alert_time = latest_bar.name
             entry_price = df.iloc[-1]['open']
             entry_time = df.iloc[-1].name
             signal_type = "BUY" if signal == 1 else "SELL"
-            
-            if "JPY" in pair: PIP_MULTIPLIER = 0.01
-            else: PIP_MULTIPLIER = 0.0001
-            sl_value = sl_pips * PIP_MULTIPLIER
-            tp_value = tp_pips * PIP_MULTIPLIER
+            if "JPY" in pair: PIP = 0.01
+            else: PIP = 0.0001
+            sl_val = sl_pips * PIP; tp_val = tp_pips * PIP
+            if signal_type == "BUY": sl_p = entry_price - sl_val; tp_p = entry_price + tp_val
+            else: sl_p = entry_price + sl_val; tp_p = entry_price - tp_val
+            send_live_alert(pair, signal_type, entry_price, entry_time, tp_p, sl_p)
 
-            if signal_type == "BUY":
-                sl_price = entry_price - sl_value; tp_price = entry_price + tp_value
-            else: 
-                sl_price = entry_price + sl_value; tp_price = entry_price - tp_value
-            
-            send_live_alert(pair, signal_type, entry_price, entry_time, tp_price, sl_price)
-
+    # ... (calculate_indicators & apply_strategy same as before) ...
     def calculate_indicators(df, rsi_p, sma_p, macd_f, macd_sl, macd_sig):
-        # Basic
         df['rsi'] = talib.RSI(df['close'], timeperiod=rsi_p)
         df['sma'] = df['close'].rolling(sma_p).mean()
         df['macd_line'], df['macd_signal'], df['macd_hist'] = talib.MACD(df['close'], fastperiod=macd_f, slowperiod=macd_sl, signalperiod=macd_sig)
-        
-        # === NEW INDICATORS ===
         df['ema_short'] = talib.EMA(df['close'], timeperiod=ema_short)
         df['ema_long'] = talib.EMA(df['close'], timeperiod=ema_long)
-        
         df['upper_bb'], df['middle_bb'], df['lower_bb'] = talib.BBANDS(df['close'], timeperiod=bb_period, nbdevup=bb_std, nbdevdn=bb_std)
-        
         df['slowk'], df['slowd'] = talib.STOCH(df['high'], df['low'], df['close'], fastk_period=stoch_k, slowk_period=stoch_d, slowk_matype=0, slowd_period=stoch_d, slowd_matype=0)
-        
         df['engulfing'] = talib.CDLENGULFING(df['open'], df['high'], df['low'], df['close'])
         df['hammer'] = talib.CDLHAMMER(df['open'], df['high'], df['low'], df['close'])
         df['shooting_star'] = talib.CDLSHOOTINGSTAR(df['open'], df['high'], df['low'], df['close'])
-        
         return df
 
     def apply_strategy(df, strategy_name, rsi_l, rsi_h):
         df['signal'] = 0
-        
-        # --- ORIGINAL STRATEGIES ---
         if strategy_name == "RSI + SMA Crossover":
             df.loc[(df['rsi'] < rsi_l) & (df['close'] > df['sma']), 'signal'] = 1
             df.loc[(df['rsi'] > rsi_h) & (df['close'] < df['sma']), 'signal'] = -1
@@ -674,42 +492,33 @@ elif st.session_state.page == "app" and st.session_state.user:
             buy_cond = (df['close'] > df['sma']) & (df['close'].shift(1) <= df['sma'].shift(1))
             sell_cond = (df['close'] < df['sma']) & (df['close'].shift(1) >= df['sma'].shift(1))
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
-
-        # --- NEW STRATEGIES ---
         elif strategy_name == "EMA Golden Cross":
             buy_cond = (df['ema_short'] > df['ema_long']) & (df['ema_short'].shift(1) <= df['ema_long'].shift(1))
             sell_cond = (df['ema_short'] < df['ema_long']) & (df['ema_short'].shift(1) >= df['ema_long'].shift(1))
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
-            
         elif strategy_name == "Bollinger Bands Bounce":
             df.loc[df['close'] < df['lower_bb'], 'signal'] = 1
             df.loc[df['close'] > df['upper_bb'], 'signal'] = -1
-            
         elif strategy_name == "Stochastic Oscillator":
             buy_cond = (df['slowk'] > df['slowd']) & (df['slowk'].shift(1) <= df['slowd'].shift(1)) & (df['slowk'] < 20)
             sell_cond = (df['slowk'] < df['slowd']) & (df['slowk'].shift(1) >= df['slowd'].shift(1)) & (df['slowk'] > 80)
             df.loc[buy_cond, 'signal'] = 1; df.loc[sell_cond, 'signal'] = -1
-            
         elif strategy_name == "EMA Trend + Price Action":
             uptrend = df['ema_short'] > df['ema_long']
             bullish_pattern = (df['engulfing'] == 100) | (df['hammer'] == 100)
             df.loc[uptrend & bullish_pattern, 'signal'] = 1
-            
             downtrend = df['ema_short'] < df['ema_long']
             bearish_pattern = (df['engulfing'] == -100) | (df['shooting_star'] == -100) 
             df.loc[downtrend & bearish_pattern, 'signal'] = -1
-
         return df
 
     def run_backtest(df_in, pair_name, initial_capital, risk_per_trade, sl_pips, tp_pips):
         df = df_in.copy(); trades = []
-        if "JPY" in pair_name: PIP_MULTIPLIER = 0.01
-        else: PIP_MULTIPLIER = 0.0001
-        RISK_PIPS_VALUE = sl_pips * PIP_MULTIPLIER
-        REWARD_PIPS_VALUE = tp_pips * PIP_MULTIPLIER
+        if "JPY" in pair_name: PIP = 0.01
+        else: PIP = 0.0001
+        RISK = sl_pips * PIP; REWARD = tp_pips * PIP
         if sl_pips == 0: return 0, 0, 0, 0, initial_capital, pd.DataFrame(), pd.DataFrame() 
-        MAX_RISK_USD = initial_capital * risk_per_trade
-        REWARD_USD = MAX_RISK_USD * (tp_pips / sl_pips)
+        MAX_RISK = initial_capital * risk_per_trade; REWARD_USD = MAX_RISK * (tp_pips / sl_pips)
         signal_bars = df[df['signal'] != 0]
         for i in range(len(signal_bars)):
             signal_row, signal_type = signal_bars.iloc[i], signal_bars.iloc[i]['signal']
@@ -718,26 +527,24 @@ elif st.session_state.page == "app" and st.session_state.user:
             if signal_index + 1 >= len(df): continue 
             entry_bar = df.iloc[signal_index + 1]
             entry_price, entry_time = entry_bar['open'], entry_bar.name
-            if signal_type == 1: stop_loss = entry_price - RISK_PIPS_VALUE; take_profit = entry_price + REWARD_PIPS_VALUE
-            else: stop_loss = entry_price + RISK_PIPS_VALUE; take_profit = entry_price - REWARD_PIPS_VALUE
+            if signal_type == 1: sl = entry_price - RISK; tp = entry_price + REWARD
+            else: sl = entry_price + RISK; tp = entry_price - REWARD
             result, profit_loss, exit_time = 'OPEN', 0.0, None
             for j in range(signal_index + 2, len(df)):
                 future_bar = df.iloc[j]
                 if signal_type == 1: 
-                    if future_bar['low'] <= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
-                    elif future_bar['high'] >= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+                    if future_bar['low'] <= sl: result, profit_loss, exit_time = 'LOSS', -MAX_RISK, future_bar.name; break
+                    elif future_bar['high'] >= tp: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
                 elif signal_type == -1: 
-                    if future_bar['high'] >= stop_loss: result, profit_loss, exit_time = 'LOSS', -MAX_RISK_USD, future_bar.name; break
-                    elif future_bar['low'] <= take_profit: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
+                    if future_bar['high'] >= sl: result, profit_loss, exit_time = 'LOSS', -MAX_RISK, future_bar.name; break
+                    elif future_bar['low'] <= tp: result, profit_loss, exit_time = 'WIN', REWARD_USD, future_bar.name; break
             if result == 'OPEN': result, profit_loss, exit_time = 'UNRESOLVED', 0.0, df.iloc[-1].name
-            trades.append({"entry_time": entry_time, "exit_time": exit_time, "signal": "BUY" if signal_type == 1 else "SELL", "entry_price": entry_price, "stop_loss": stop_loss, "take_profit": take_profit, "result": result, "profit_loss": profit_loss})
+            trades.append({"entry_time": entry_time, "exit_time": exit_time, "signal": "BUY" if signal_type == 1 else "SELL", "entry_price": entry_price, "stop_loss": sl, "take_profit": tp, "result": result, "profit_loss": profit_loss})
         if not trades: return 0, 0, 0, 0, initial_capital, pd.DataFrame(), pd.DataFrame() 
         trade_log = pd.DataFrame(trades).set_index('entry_time')
         resolved_trades = trade_log[trade_log['result'].isin(['WIN', 'LOSS'])].copy()
         if resolved_trades.empty: return 0, 0, 0, 0, initial_capital, trade_log, resolved_trades
-        
         resolved_trades.sort_values(by='exit_time', inplace=True)
-        
         total_trades = len(resolved_trades)
         winning_trades = len(resolved_trades[resolved_trades['result'] == 'WIN'])
         total_profit = resolved_trades['profit_loss'].sum()
@@ -749,320 +556,140 @@ elif st.session_state.page == "app" and st.session_state.user:
         resolved_trades['equity'] = initial_capital + resolved_trades['profit_loss'].cumsum()
         return total_trades, win_rate, total_profit, profit_factor, final_capital, trade_log, resolved_trades
 
-    # === MAIN CHART (TRADINGVIEW WIDGET) ===
-    st.markdown("---")
-    st.subheader(f"**{selected_pair}** – **{selected_interval}**")
-    
+    # === CHART & BACKTEST UI ===
+    st.markdown("---"); st.subheader(f"**{selected_pair}** – **{selected_interval}**")
     def show_advanced_chart(symbol):
-        # Map format "EUR/USD" -> "FX:EURUSD" for TradingView
         if "BTC" in symbol: tv_symbol = "COINBASE:BTCUSD"
         elif "XAU" in symbol: tv_symbol = "OANDA:XAUUSD"
         else: tv_symbol = f"FX:{symbol.replace('/', '')}"
-        
-        # Advanced Real-Time Chart Widget with RSI and MACD
-        html_code = f"""
-        <div class="tradingview-widget-container">
-          <div id="tradingview_advanced_chart"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-          <script type="text/javascript">
-          new TradingView.widget(
-          {{
-            "width": "100%",
-            "height": 600,
-            "symbol": "{tv_symbol}",
-            "interval": "60",
-            "timezone": "Etc/UTC",
-            "theme": "dark",
-            "style": "1",
-            "locale": "en",
-            "enable_publishing": false,
-            "allow_symbol_change": true,
-            "studies": [
-              "RSI@tv-basicstudies",
-              "MACD@tv-basicstudies"
-            ],
-            "container_id": "tradingview_advanced_chart"
-          }}
-          );
-          </script>
-        </div>
-        """
-        components.html(html_code, height=620)
-
-    # Display the Advanced Widget
+        components.html(f"""<div class="tradingview-widget-container"><div id="tradingview_chart"></div><script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script><script type="text/javascript">new TradingView.widget({{"width": "100%","height": 600,"symbol": "{tv_symbol}","interval": "60","timezone": "Etc/UTC","theme": "dark","style": "1","locale": "en","enable_publishing": false,"allow_symbol_change": true,"studies": ["RSI@tv-basicstudies","MACD@tv-basicstudies"],"container_id": "tradingview_chart"}});</script></div>""", height=620)
     show_advanced_chart(selected_pair)
-    
-    # We still need to fetch data internally to check for signals (Alert System)
-    # This "invisible" fetch keeps your "Live Alerts" working in the background.
-    with st.spinner(f"Analyzing market data for alerts..."):
-         # Use Yahoo for this check (fast, no API limit)
+
+    with st.spinner(f"Analyzing..."):
          df_analysis = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
          if not df_analysis.empty:
              df_ind = calculate_indicators(df_analysis, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
              df_final = apply_strategy(df_ind, strategy_name, alert_rsi_low, alert_rsi_high)
              check_for_live_signal(df_final, selected_pair, tp_pips, sl_pips)
 
-    # === BACKTEST SECTION ===
     if run_backtest_button:
-        with st.spinner("Running backtest on real market data..."):
-            # USE YAHOO FOR BACKTEST (UNLIMITED)
-            df_backtest_data = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
-            if not df_backtest_data.empty:
-                df_bt_ind = calculate_indicators(df_backtest_data, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+        with st.spinner("Backtesting..."):
+            df_bt_data = fetch_data(selected_pair, INTERVALS[selected_interval], source="Yahoo")
+            if not df_bt_data.empty:
+                df_bt_ind = calculate_indicators(df_bt_data, rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
                 df_bt_strat = apply_strategy(df_bt_ind, strategy_name, alert_rsi_low, alert_rsi_high)
                 df_backtest = df_bt_strat.dropna()
-                
-                total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(
-                    df_backtest, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips
-                )
-                st.session_state.backtest_results = {
-                    "total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit,
-                    "profit_factor": pf, "final_capital": final_cap, "trade_df": trade_df,
-                    "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval, "data_len": len(df_backtest)
-                }
-            else:
-                 st.error("Could not fetch backtest data from Yahoo.")
+                total_trades, win_rate, total_profit, pf, final_cap, trade_df, res_df = run_backtest(df_backtest, selected_pair, initial_capital, risk_pct, sl_pips, tp_pips)
+                st.session_state.backtest_results = {"total_trades": total_trades, "win_rate": win_rate, "total_profit": total_profit, "profit_factor": pf, "trade_df": trade_df, "resolved_trades_df": res_df, "pair": selected_pair, "interval": selected_interval}
+            else: st.error("No data.")
         st.rerun()
 
-    # === DISPLAY RESULTS ===
     if 'backtest_results' in st.session_state:
         results = st.session_state.backtest_results
-        st.markdown("---"); st.subheader("Backtesting Results (Simulated)")
-        st.markdown(f"***Data Tested:*** *{results['pair']}* on *{results['interval']}* interval. *{results['data_len']}* bars.")
-        col_t, col_w, col_p, col_f = st.columns(4)
-        col_t.metric("Total Trades", results['total_trades'])
-        col_w.metric("Win Rate", f"{results['win_rate']:.2%}")
-        col_p.metric("Total Profit ($)", f"{results['total_profit']:,.2f}", delta=f"{(results['total_profit']/initial_capital):.2%}")
-        col_f.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
-        
-        st.subheader("Equity Curve")
-        resolved_df_key = 'resolved_trades_df' 
-        if resolved_df_key in results and not results[resolved_df_key].empty:
-            equity_fig = go.Figure()
-            equity_fig.add_trace(go.Scatter(x=results[resolved_df_key]['exit_time'], y=results[resolved_df_key]['equity'], mode='lines', name='Equity', line=dict(color='#26a69a')))
-            equity_fig.update_layout(xaxis_title="Time", yaxis_title="Account Equity ($)", template='plotly_dark' if st.session_state.theme == 'dark' else 'plotly_white', height=300)
-            st.plotly_chart(equity_fig, use_container_width=True)
-        else: st.info("No resolved trades found with these settings.")
-        
-        st.subheader("Detailed Trade Log")
-        trade_df_display = results['trade_df'].copy()
-        # Clean Headers
-        trade_df_display.columns = [col.replace('_', ' ').title() for col in trade_df_display.columns]
-        st.dataframe(trade_df_display, width=1000) 
-        
-    elif not 'backtest_results' in st.session_state:
-        st.markdown("---")
-        st.info("Set your parameters in the sidebar and click 'Run Backtest' to see results.")
+        st.markdown("---"); st.subheader("Backtesting Results")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Trades", results['total_trades'])
+        c2.metric("Win Rate", f"{results['win_rate']:.2%}")
+        c3.metric("Profit ($)", f"{results['total_profit']:,.2f}")
+        c4.metric("Profit Factor", f"{results['profit_factor']:,.2f}")
+        if not results['resolved_trades_df'].empty:
+            fig = go.Figure(); fig.add_trace(go.Scatter(x=results['resolved_trades_df']['exit_time'], y=results['resolved_trades_df']['equity'], mode='lines', line=dict(color='#26a69a')))
+            fig.update_layout(title="Equity Curve", template="plotly_dark"); st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(results['trade_df'], width=1000)
 
-    # === NEW: NATIVE ECONOMIC CALENDAR (STYLED) ===
-    st.markdown("---")
-    st.subheader("📅 Economic Calendar (Live Updates)")
-    
-    # We use the widget because it is the ONLY free source that updates "Actual" instantly.
-    # The XML/Python table method is too slow for real trading.
-    calendar_html = """
-    <div class="tradingview-widget-container">
-      <div class="tradingview-widget-container__widget"></div>
-      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
-      {
-      "width": "100%",
-      "height": "500",
-      "colorTheme": "dark",
-      "isTransparent": false,
-      "locale": "en",
-      "importanceFilter": "-1,0,1",
-      "currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD"
-    }
-      </script>
-    </div>
-    """
-    components.html(calendar_html, height=520, scrolling=True)
+    st.markdown("---"); st.subheader("📅 Economic Calendar (Live)")
+    components.html("""<div class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>{"width": "100%","height": "500","colorTheme": "dark","isTransparent": false,"locale": "en","importanceFilter": "-1,0,1","currencyFilter": "USD,EUR,GBP,JPY,AUD,CAD,CHF,NZD"}</script></div>""", height=520, scrolling=True)
 
-    # === STRATEGY SCANNER (PREMIUM) ===
     if is_premium:
-        st.markdown(f"""
-            <div style="border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'}; border-radius: 8px; padding: 20px; margin-top: 30px; margin-bottom: 30px; background-color: {'#1a1a1a' if st.session_state.theme == 'dark' else '#fdfdfd'}; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);">
-                <h3 style="color: {'#e0e0e0' if st.session_state.theme == 'dark' else '#333'}; margin-top: 0;">
-                    🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
-                </h3>
-                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'}; margin-bottom: 20px;">
-                    Uncover the most profitable strategies by backtesting across multiple currency pairs and timeframes, tailored to your risk parameters.
-                </p>
-        """, unsafe_allow_html=True)
-
-        all_strategies = ["RSI + SMA Crossover", "MACD Crossover", "RSI + MACD (Confluence)", "SMA + MACD (Confluence)", "RSI Standalone", "SMA Crossover Standalone", "EMA Golden Cross", "Bollinger Bands Bounce", "Stochastic Oscillator", "EMA Trend + Price Action"]
+        st.markdown("---"); st.subheader("🚀 Strategy Scanner")
         col_scan1, col_scan2, col_scan3 = st.columns(3)
-        with col_scan1: scan_pairs = st.multiselect("Select Currency Pairs", PREMIUM_PAIRS, default=[])
-        with col_scan2: scan_intervals = st.multiselect("Select Timeframes", list(INTERVALS.keys()), default=[])
-        with col_scan3: scan_strategies = st.multiselect("Select Strategies", all_strategies, default=[])
-        
-        scan_params = { "rsi_p": rsi_period, "sma_p": sma_period, "macd_f": macd_fast, "macd_sl": macd_slow, "macd_sig": macd_signal, "rsi_l": alert_rsi_low, "rsi_h": alert_rsi_high, "capital": initial_capital, "risk": risk_pct, "sl": sl_pips, "tp": tp_pips }
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Initiate Scan", type="primary", key="scan_button_professional", use_container_width=True): 
-            if not all([scan_pairs, scan_intervals, scan_strategies]): st.error("Please select at least one Pair, Timeframe, and Strategy.")
+        with col_scan1: scan_pairs = st.multiselect("Pairs", PREMIUM_PAIRS, default=[])
+        with col_scan2: scan_intervals = st.multiselect("Timeframes", list(INTERVALS.keys()), default=[])
+        with col_scan3: scan_strategies = st.multiselect("Strategies", strategies_list, default=[])
+        if st.button("Scan", type="primary", use_container_width=True):
+            if not all([scan_pairs, scan_intervals, scan_strategies]): st.error("Select options.")
             else:
-                total_jobs = len(scan_pairs) * len(scan_intervals) * len(scan_strategies)
-                progress_bar = st.progress(0, text=f"Starting Scan... (0/{total_jobs})")
-                scan_results = []
-                job_count = 0
-                results_placeholder = st.empty()
-                for pair in scan_pairs:
-                    for interval_key in scan_intervals:
-                        interval_val = INTERVALS[interval_key]
-                        # USE YAHOO FOR SCANNER (UNLIMITED)
-                        data = fetch_data(pair, interval_val, source="Yahoo") 
-                        if data.empty: total_jobs -= len(scan_strategies); continue
-                        for strategy in scan_strategies:
-                            job_count += 1
-                            progress_bar.progress(job_count / total_jobs, text=f"Analyzing {strategy} on {pair} ({interval_key})... ({job_count}/{total_jobs})")
-                            data_with_indicators = calculate_indicators(data.copy(), scan_params["rsi_p"], scan_params["sma_p"], scan_params["macd_f"], scan_params["macd_sl"], scan_params["macd_sig"])
-                            data_with_strategy = apply_strategy(data_with_indicators.copy(), strategy, scan_params["rsi_l"], scan_params["rsi_h"])
-                            data_clean = data_with_strategy.dropna()
-                            if data_clean.empty: continue
-                            total_trades, win_rate, total_profit, pf, _, _, _ = run_backtest(data_clean, pair, scan_params["capital"], scan_params["risk"], scan_params["sl"], scan_params["tp"])
-                            if total_trades > 0: scan_results.append({"Pair": pair, "Timeframe": interval_key, "Strategy": strategy, "Total Profit ($)": total_profit, "Win Rate (%)": win_rate * 100, "Profit Factor": pf, "Total Trades": total_trades})
-                progress_bar.progress(1.0, text="Scan Complete!")
-                with results_placeholder.container(): 
-                    if scan_results:
-                        st.subheader("Scan Results Overview")
-                        results_df = pd.DataFrame(scan_results).sort_values(by="Total Profit ($)", ascending=False).reset_index(drop=True)
-                        
-                        # === STYLING FUNCTIONS ===
-                        def style_win_rate(val):
-                            color = '#26a69a' if val >= 50 else '#ef5350' 
-                            return f'background-color: {color}; color: white; font-weight: bold;'
-                        
-                        def style_profit(val):
-                            color = '#26a69a' if val > 0 else '#ef5350'
-                            return f'color: {color}; font-weight: bold;'
+                prog = st.progress(0); results = []
+                for i, pair in enumerate(scan_pairs):
+                    for tf in scan_intervals:
+                        data = fetch_data(pair, INTERVALS[tf], source="Yahoo")
+                        if data.empty: continue
+                        for strat in scan_strategies:
+                            ind = calculate_indicators(data.copy(), rsi_period, sma_period, macd_fast, macd_slow, macd_signal)
+                            df_s = apply_strategy(ind, strat, alert_rsi_low, alert_rsi_high).dropna()
+                            res = run_backtest(df_s, pair, initial_capital, risk_pct, sl_pips, tp_pips)
+                            if res[0]>0: results.append({"Pair": pair, "TF": tf, "Strategy": strat, "Profit": res[2], "Win Rate": res[1]})
+                    prog.progress((i+1)/len(scan_pairs))
+                if results:
+                    df_res = pd.DataFrame(results).sort_values("Profit", ascending=False)
+                    st.dataframe(df_res.style.format({"Profit": "${:,.2f}", "Win Rate": "{:.2%}"}).background_gradient(subset=['Win Rate'], cmap='RdYlGn'), width=1000)
+                else: st.info("No trades found.")
 
-                        # Apply Styles
-                        st.dataframe(
-                            results_df.style
-                            .map(style_win_rate, subset=['Win Rate (%)'])
-                            .map(style_profit, subset=['Total Profit ($)'])
-                            .format({"Total Profit ($)": "${:,.2f}", "Win Rate (%)": "{:.2f}%", "Profit Factor": "{:.2f}"}),
-                            width=1000
-                        )
-                    else: st.info("Scan completed, but no profitable trades were found.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    else:
-         st.markdown(f"""
-            <div style="border: 1px solid {'#333' if st.session_state.theme == 'dark' else '#ddd'}; border-radius: 8px; padding: 20px; margin-top: 30px; margin-bottom: 30px; background-color: {'#1a1a1a' if st.session_state.theme == 'dark' else '#fdfdfd'}; box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);">
-                <h3 style="color: {'#e0e0e0' if st.session_state.theme == 'dark' else '#333'}; margin-top: 0;">
-                    🚀 Strategy Scanner <span style="font-size: 0.7em; color: #FFD700;">(Premium Feature)</span>
-                </h3>
-                <p style="color: {'#bbb' if st.session_state.theme == 'dark' else '#555'};">
-                    The **Strategy Scanner** is a powerful Premium feature designed to help you discover the most effective trading strategies. Upgrade to unlock!
-                </p>
-            </div>
-         """, unsafe_allow_html=True)
-         
-         if st.button("Upgrade to Premium Now! (Unlock Scanner)", type="primary", use_container_width=True):
-             st.session_state.page = "profile"
-             st.rerun()
-
-    # === RISK DISCLAIMER ===
-    st.markdown("---"); st.subheader("⚠️ Risk Disclaimer")
-    st.warning(
-        """
-        **This is a simulation and not financial advice.**
-        
-        * All backtest results are based on **historical data** and do not guarantee future performance.
-        * Forex trading involves substantial risk and is not suitable for every investor.
-        * The valuation of currencies may fluctuate, and as a result, clients may lose more than their original investment.
-        * This tool is for educational and informational purposes only.
-        * Always trade responsibly and use your own risk management plan.
-        * Past performance is not indicative of future results.
-        """
-    )
-
-    components.html("<meta http-equiv='refresh' content='61'>", height=0)
-
-    # === ALERT HISTORY SECTION (SIDEBAR BOTTOM) ===
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Alert History")
-
+    st.sidebar.markdown("---"); st.sidebar.subheader("Alert History")
     @st.cache_data(ttl=60)
-    def load_alerts_from_firebase(user_id):
-        try:
-            alerts = db.child("users").child(user_id).child("alerts").get(st.session_state.user['idToken']).val()
-            if alerts:
-                return sorted(alerts.values(), key=lambda x: x['entry_timestamp'], reverse=True)
-            return []
-        except Exception as e:
-            return []
-
+    def load_alerts_from_firebase(uid):
+        try: return sorted(db.child("users").child(uid).child("alerts").get(st.session_state.user['idToken']).val().values(), key=lambda x: x['entry_timestamp'], reverse=True)
+        except: return []
+    
     def update_alert_outcomes(alerts):
         if db is None: return
-        with st.spinner("Refreshing alert outcomes..."):
-            updated_count = 0
-            for alert in alerts:
-                if alert['status'] == 'RUNNING':
-                    try:
-                        alert_time = datetime.fromisoformat(alert['entry_time'])
-                        time_diff_seconds = (datetime.now(timezone.utc) - alert_time).total_seconds()
-                        interval_map = {"1min": 60, "5min": 300, "15min": 900, "30min": 1800, "1h": 3600}
-                        interval_seconds = interval_map.get(selected_interval, 3600)
-                        bars_to_fetch = int(time_diff_seconds / interval_seconds) + 2
-                        if bars_to_fetch < 2: continue
-                        
-                        df_new = fetch_data(alert['pair'], selected_interval, source="Yahoo", output_size=bars_to_fetch)
-                        if df_new.empty: continue
-                        
-                        try:
-                            if df_new.index.tz is None:
-                                df_new.index = df_new.index.tz_localize('UTC')
-                            df_future = df_new 
-                        except KeyError:
-                             continue
-                        
-                        if df_future.empty: continue
-                        new_status = "RUNNING"
-                        tp = float(alert['tp_price']); sl = float(alert['sl_price'])
-                        for _, bar in df_future.iterrows():
-                            if alert['type'] == 'BUY':
-                                if bar['low'] <= sl: new_status = "LOSS"; break
-                                if bar['high'] >= tp: new_status = "PROFIT"; break
-                            elif alert['type'] == 'SELL':
-                                if bar['high'] >= sl: new_status = "LOSS"; break
-                                if bar['low'] <= tp: new_status = "PROFIT"; break
-                        
-                        if new_status != "RUNNING":
-                            updated_count += 1
-                            alert['status'] = new_status
-                            db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": new_status}, st.session_state.user['idToken'])
-                    except Exception as e: print(f"Error: {e}")
-            if updated_count > 0: st.sidebar.success(f"Updated {updated_count} alert(s)!"); st.cache_data.clear()
-            else: st.sidebar.info("No new outcomes found.")
+        for alert in alerts:
+            if alert['status'] == 'RUNNING':
+                # === LOGIC FIX: SORTING DATA ===
+                df_new = fetch_data(alert['pair'], selected_interval, source="Yahoo").sort_index()
+                if df_new.empty: continue
+                try: 
+                    # Ensure timezone awareness match
+                    if df_new.index.tz is None: df_new.index = df_new.index.tz_localize('UTC')
+                    # Filter only bars AFTER entry
+                    entry_time = datetime.fromisoformat(alert['entry_time'])
+                    df_future = df_new[df_new.index > entry_time]
+                except: continue
+                
+                new_status = "RUNNING"
+                tp = float(alert['tp_price']); sl = float(alert['sl_price'])
+                
+                for _, bar in df_future.iterrows():
+                    if alert['type'] == 'BUY':
+                        # STRICT LOGIC CHECK
+                        if bar['low'] <= sl: new_status = "LOSS"; break
+                        if bar['high'] >= tp: new_status = "WIN"; break
+                    elif alert['type'] == 'SELL':
+                        if bar['high'] >= sl: new_status = "LOSS"; break
+                        if bar['low'] <= tp: new_status = "WIN"; break
+                
+                if new_status != "RUNNING":
+                    db.child("users").child(user_id).child("alerts").child(alert['id']).update({"status": new_status}, st.session_state.user['idToken'])
+        st.cache_data.clear()
 
     alert_list = load_alerts_from_firebase(user_id)
-
-    if st.sidebar.button("Refresh Outcomes", use_container_width=True, key="refresh_outcomes_btn"):
-        update_alert_outcomes(alert_list)
-        st.rerun()
-
+    if st.sidebar.button("Refresh Outcomes", use_container_width=True): update_alert_outcomes(alert_list); st.rerun()
+    
+    # === CARD UI ===
     if alert_list:
-        table_html = "<table class='alert-history-table'><tr><th>Time</th><th>Pair</th><th>Type</th><th>Status</th></tr>"
         for alert in alert_list[:10]:
-            try: dt = datetime.fromisoformat(alert['entry_time'])
-            except ValueError: dt = datetime.now() 
-            time_str = dt.strftime('%m/%d %H:%M')
-            status_class = f"alert-status-{alert['status']}"
-            table_html += f"<tr><td>{time_str}</td><td>{alert['pair']}</td><td>{alert['type']}</td><td><span class='{status_class}'>{alert['status']}</span></td></tr>"
-        table_html += "</table>"
-        st.sidebar.markdown(table_html, unsafe_allow_html=True)
-    else:
-        st.sidebar.info("No alerts found yet.")
+            color = "#26a69a" if alert['type'] == "BUY" else "#ef5350"
+            status_color = "#26a69a" if alert['status'] == "WIN" else "#ef5350" if alert['status'] == "LOSS" else "#ff9800"
+            st.sidebar.markdown(f"""
+            <div class="alert-card">
+                <div class="alert-header">
+                    <span>{alert['pair']}</span>
+                    <span style="color:{color}">{alert['type']}</span>
+                    <span style="color:{status_color}">{alert['status']}</span>
+                </div>
+                <div class="alert-details">
+                    Entry: {alert['entry_price']}<br>
+                    TP: {alert['tp_price']} | SL: {alert['sl_price']}<br>
+                    Time: {datetime.fromisoformat(alert['entry_time']).strftime('%m/%d %H:%M')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else: st.sidebar.info("No alerts yet.")
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("Profile & Logout", use_container_width=True, key="profile_button_bottom"):
-        st.session_state.page = "profile"
-        st.rerun()
+    if st.sidebar.button("Logout", use_container_width=True): logout()
 
 # === 8. ERROR HANDLING ===
 elif not st.session_state.user:
-    st.set_page_config(page_title="Error - PipWizard", page_icon="🚨", layout="centered")
-    st.title("PipWizard 🧙‍♂️ 📈📉")
-    st.error("Application failed to initialize.")
+    st.set_page_config(page_title="Error", page_icon="🚨", layout="centered")
+    st.error("App failed.")
